@@ -8,7 +8,8 @@
 
 ## Containers used
 
-- rnaseqde
+<div style="columns: 2;">
+
 - HISAT2
 - StringTie
 - STAR
@@ -17,11 +18,6 @@
 - Cufflinks
 - Kallisto
 - Sleuth
+- [rstudio-rnaseqde](https://singularity-hub.org/collections/4866)
 
-### Cloning scripts into local
-
-```bash
-$ project_root="path_to_project_root"
-$ cd ${project_root}
-$ git clone https://github.com/hmdlab/eval_rnaseq_map.git
-```
+</div>

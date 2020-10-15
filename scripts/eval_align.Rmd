@@ -1,0 +1,431 @@
+---
+title: "Evaluation of alignment results"
+output: html_notebook
+params:
+  var: NULL
+  input_dirs: NULL
+  output_dir: NULL
+  xlab: NULL
+editor_options:
+  chunk_output_type: console
+---
+
+## Set enviroment & requirements
+```{r}
+options(stringAsFactors = FALSE)
+
+library(here)
+
+library(data.table)
+library(ggrepel)
+library(ggpubr)
+library(ggedit)
+
+library(RSQLite)
+
+library(tidyverse)
+
+# Note: Do not display as exponential
+options(scipen = 100)
+
+utils <- new.env(); source(here('scripts/utils/base.R'), utils); source(here('scripts/utils/plot.R'), utils)
+
+```
+
+## Preparations
+
+### Set parameters
+```{r}
+# NOTE: Choose one
+if (length(.GlobalEnv$params) < 1) {
+  # # NOTE: Read length
+  input_dirs <- here('results', c('test05_L35', 'test04_L50', 'test03_L75', 'test01_main'))
+  names(input_dirs) <- c(35, 50, 75, 100)
+
+  params <- list(
+    var = 'length',
+    input_dirs = input_dirs,
+    output_dir = 'figs',
+    xlab = 'Read length (bases)'
+  )
+
+  # # NOTE: Library size
+  # input_dirs <- here('results', c('test06_D10M', 'test07_D20M', 'test01_main', 'test09_D80M'))
+  # names(input_dirs) <- c(10, 20, 40, 80)
+  #
+  # params <- list(
+  #   var = 'depth',
+  #   input_dirs = input_dirs,
+  #   output_dir = 'figs',
+  #   xlab = 'Library size (million reads)'
+  # )
+  #
+
+  # # NOTE: Number of replicates
+  # input_dirs <- here('results', c('test10_R2', 'test01_main', 'test12_R4', 'test13_R8', 'test14_R12'))
+  # names(input_dirs) <- c(2, 3, 4, 8, 12)
+  #
+  # params <- list(
+  #   var = 'reps',
+  #   input_dirs = input_dirs,
+  #   output_dir = 'figs',
+  #   xlab = 'Number of replicates'
+  # )
+}
+
+prefix <- 'align_sim'
+var <- params$var
+input_dirs <- params$input_dirs
+xlab <- params$xlab
+main_condition <- 'Condition: read length = 100 bases, library size = 40 M reads, n = 3'
+output_dir <- params$output_dir
+
+```
+
+### Load result
+```{r}
+patterns_ <- list(
+  merged = '.eval.stdout.sqlite.merged.sqlite$'
+)
+
+load_ <- function(path, table_name) {
+  conn <- SQLite() %>% dbConnect(path, synchronous = "off")
+  df_ <- conn %>% dbGetQuery(paste0("select * from ", table_name))
+  conn %>% dbDisconnect
+  df_
+}
+
+inputs <- data.frame(
+  dataset = "length",
+  condition = c(35, 50, 75, 100),
+  input_dir = here("results", c("test05_L35", "test04_L50", "test03_L75", "test01_main")),
+  stringsAsFactors = FALSE
+)
+
+inputs <- inputs %>%
+  mutate(path = map(input_dir, ~ utils$find_paths(.x, patterns_$merged) %>% unlist)) %>%
+  unnest(path) %>%
+  mutate(name = paste(
+    condition,
+    map_chr(path, ~ .x %>% dirname %>% utils$to_combination()),
+    sep = "."
+  ))
+
+
+metrics <- inputs %>%
+  mutate(
+    metrics = map(path, ~ load_(.x, "metrics"))
+  ) %>%
+  mutate(
+    transcript_metrics = map(path, ~ load_(.x, table_name = "transcript_metrics"))
+  )
+
+
+metrics$transcript_metrics[1] %>%
+  summary
+
+
+metrics$transcript_metrics[1] %>%
+  group_by(qname) %>%
+  dplyr::summarize(lim = list(utils$min_max_(c(value.a, value.b, value.c)))) %>%
+
+
+
+paths_ <- input_dirs %>% map(utils$find_paths, patterns_) %>% unlist
+names(paths_) <- paste(
+  names(paths_) %>% strsplit('\\.') %>% sapply("[", 1),
+  dirname(paths_) %>% sapply(utils$to_combination),
+  sep = '.'
+)
+
+load_ <- function(path, name) {
+  path %>% fread(
+    sep = '\t',
+    col.names = c('mapped-true', 'mapped-false', 'unmapped'),
+    stringsAsFactors = FALSE
+  ) %>%
+    mutate(path = path)
+}
+
+results <- paths_ %>%
+  map2(names(paths_), load_) %>%
+  do.call('rbind', .) %>%
+  rownames_to_column(var = 'name') %>%
+  mutate(
+    condition = as.numeric(name %>% strsplit('\\.') %>% sapply("[", 1)),
+    combination = utils$to_combination(path)
+  )
+
+```
+
+### Fill unmapped counts manually (if necessary)
+```{r}
+# NOTE: Fill and reload
+work_path <- here(paste0('results/eval/align_result_', var, '.tsv'))
+## results %>% write_tsv(work_path)
+results <- fread(work_path, sep = '\t', stringsAsFactors = FALSE)
+
+```
+
+## Characterization for gene annotation
+### Calculate metrics
+```{r}
+calc_metrics_ <- function(results) {
+  results %>%
+    dplyr::mutate(recall = `mapped-true` / (`mapped-true` + `unmapped`)) %>%
+    dplyr::mutate(precision = `mapped-true` / (`mapped-true` + `mapped-false`)) %>%
+    dplyr::group_by(condition, combination) %>%
+    dplyr::summarise(recall = mean(recall), precision = mean(precision)) %>%
+    tidyr::gather(c(-condition, -combination), key = 'metric', value = 'value', -1) %>%
+    data.frame
+}
+
+metrics <- results %>%
+  calc_metrics_ %>%
+  mutate(name = paste0(condition, '.', combination)) %>%
+  utils$format_metrics()
+
+path_ <- here(output_dir, paste(prefix, var, 'recall.precision.all.tsv', sep = '_'))
+metrics %>% write_tsv(path_)
+```
+
+### Compare annotations
+```{r}
+comparison_annotations <- metrics %>%
+  compare_('annotation', c('metric', 'combination', 'condition'))
+
+path_ <- here(output_dir, paste(prefix, var, 'comparison_annotations.tsv', sep = '_'))
+comparison_annotations %>% write_tsv(path_)
+
+```
+
+### Draw line plot (Condition vs. metrics facet by scenario)
+```{r}
+metrics_ <- metrics %>%
+  utils$filter_combination('main') %>%
+  mutate(scenario = factor(utils$to_scenario(annotation), levels = c('Incomplete', 'Complete', 'Complicated')))
+
+colors_ <- metrics_ %>%
+  distinct(abbr, tool) %>%
+  deframe %>%
+  utils$to_color()
+
+shapes_ <- metrics_ %>%
+  distinct(abbr, upper_abbr) %>%
+  deframe %>% factor
+
+linetypes_ <- metrics_ %>%
+  distinct(abbr, upper_abbr) %>%
+  deframe %>% factor
+
+theme_ <- theme(
+  text = element_text(size = 18),
+  legend.position = 'bottom',
+  legend.title = element_blank(),
+  legend.text = element_text(size = 18)
+)
+
+condition_ <- function(var) {
+  condition_ <- list(
+    length = 'read length = 100 bases',
+    depth = 'library size = 40 M reads',
+    reps = 'n = 3'
+  )
+  condition_[[var]] <- NULL
+  paste0('Condition: ', paste(unlist(condition_), collapse = ', '))
+}
+
+ylim_ <- c(
+  metrics_ %>% .$value %>% min,
+  metrics_ %>% .$value %>% max
+)
+
+plot_ <- function(df, xlab, ylab) {
+  g <- df %>%
+    ggline(
+      'condition', 'value',
+      color = 'abbr', shape = 'abbr', linetype = 'abbr',
+      xlab = xlab, ylab = ylab
+    )
+  g <- g + ylim(ylim_)
+  g <- g + scale_colour_manual(name = 'Combination', values = colors_)
+  g <- g + scale_shape_manual(name = 'Combination', values = shapes_)
+  g <- g + scale_linetype_manual(name = 'Combination', values = linetypes_)
+  g <- facet(g + theme_bw() + theme_, facet.by = 'scenario')
+  g
+}
+
+plots_ <- list(
+  recall = metrics_ %>% filter(metric == 'recall') %>% plot_(xlab, 'Recall'),
+  precision = metrics_ %>% filter(metric == 'precision') %>% plot_(xlab, 'Precision')
+)
+
+g <- ggarrange(
+  plotlist = plots_,
+  nrow = 1, ncol = 2,
+  legend = 'bottom', common.legend = TRUE
+)
+g <- g %>% annotate_figure(
+  bottom = text_grob(condition_(var), size = 16)
+)
+
+g %>% plot
+path_ <- here(output_dir, paste(prefix, var, 'line.pdf', sep = '_'))
+ggsave(file = path_, plot = g, dpi = 300, width = 6.4 * 2, height = 3.2 * 2)
+
+```
+
+### Draw dotchart (main condition only)
+```{r}
+metrics_ <- metrics %>%
+  utils$filter_condition('main') %>%
+  utils$filter_combination('main') %>%
+  mutate(abbr = paste(utils$to_scenario(annotation), abbr, sep = '-'))
+
+colors_ <- metrics_ %>%
+  distinct(abbr, tool) %>%
+  deframe %>%
+  utils$to_color()
+
+shapes_ <- metrics_ %>%
+  distinct(abbr, annotation) %>%
+  deframe %>% factor
+
+theme_ <- theme(
+  text = element_text(size = 18),
+  legend.position = 'bottom',
+  legend.title = element_blank(),
+  legend.text = element_text(size = 18)
+)
+
+ylim_ <- c(
+  metrics_ %>% .$value %>% min,
+  metrics_ %>% .$value %>% max
+)
+
+plot_ <- function(df, ylab) {
+  g <- df %>% ggdotchart(
+    'abbr', 'value',
+    color = 'abbr', shape = 'abbr',
+    palette = colors_, x.text.col	= 'abbr',
+    sorting = 'descending',
+    ylab = ylab,
+    y.text.col = TRUE,
+    rotate = TRUE,
+    dot.size = 2
+  )
+  g <- g + ylim(ylim_)
+  g <- g + scale_colour_manual(name = 'Combination', values = colors_)
+  g <- g + scale_shape_manual(name = 'Combination', values = shapes_)
+  g <- g + theme_cleveland() + theme_
+  g
+}
+
+plots_ <- list(
+  'recall' = metrics_ %>% filter(metric == 'recall') %>% plot_('Recall'),
+  'precision' = metrics_ %>% filter(metric == 'precision') %>% plot_('Precision')
+)
+
+g <- ggarrange(
+  plotlist = plots_,
+  ncol = 2, nrow = 1,
+  legend = 'bottom', common.legend = TRUE
+)
+g <- g %>% annotate_figure(
+  bottom = text_grob(main_condition, size = 16)
+)
+
+g %>% plot
+path_ <- here(output_dir, paste(prefix, 'main', 'recall.precision.all', 'dot.pdf', sep = '_'))
+ggsave(file = path_, plot = g, dpi = 300, width = 6.4 * 2.4, height = 3.2 * 2)
+
+```
+
+### Draw scatter plot (main condition only, GENCODE vs. GENCODE.x)
+```{r}
+metrics_ <- comparison_annotations %>%
+  utils$filter_condition('main') %>%
+  utils$filter_combination('main') %>%
+  mutate(scenario = factor(utils$to_scenario(annotation), levels = c('Incomplete', 'Complete', 'Complicated')))
+
+colors_ <- metrics_ %>%
+  distinct(abbr, tool) %>%
+  deframe %>%
+  utils$to_color()
+
+shapes_ <- metrics_ %>%
+  distinct(abbr, upper_abbr) %>%
+  deframe %>% factor
+
+theme_ <- theme(
+  text = element_text(size = 18),
+  plot.title = element_text(vjust = - 6, hjust = 0.025),
+  legend.position = 'bottom',
+  legend.title = element_blank(),
+  legend.text = element_text(size = 18)
+)
+
+# FIXME: functionalize
+lim_ <- list(
+  recall = c(
+    metrics_ %>% filter(metric == 'recall') %>% select(value.a, value.b, value.c) %>% min,
+    metrics_ %>% filter(metric == 'recall') %>% select(value.a, value.b, value.c) %>% max
+  ),
+  precision = c(
+    metrics_ %>% filter(metric == 'precision') %>% select(value.a, value.b, value.c) %>% min,
+    metrics_ %>% filter(metric == 'precision') %>% select(value.a, value.b, value.c) %>% max
+  )
+)
+
+plot_ <- function(df, labs, title) {
+  lim_ <- lim_[[tolower(title)]]
+  g <- df %>% ggscatter(
+    'x', 'y',
+    color = 'abbr', shape = 'abbr',
+    xlab = labs[1], ylab = labs[2], title = title
+  )
+  g <- g + scale_colour_manual(name = 'Combination', values = colors_)
+  g <- g + scale_shape_manual(name = 'Combination', values = shapes_)
+  g <- g + geom_abline(slope = 1, intercept = 0, linetype = 'dotted')
+  g <- g + xlim(lim_) + ylim(lim_) + coord_fixed()
+  g <- g + theme_bw() + theme_
+  g
+}
+
+g1 <- metrics_ %>%
+  filter(metric == 'recall') %>%
+  mutate(x = value.a, y = value.b) %>%
+  plot_(labs = c('Complete', 'Incomplete'), title = 'Recall')
+
+g2 <- metrics_ %>%
+  filter(metric == 'precision') %>%
+  mutate(x = value.a, y = value.b) %>%
+  plot_(labs = c('Complete', 'Incomplete'), title = 'Precision')
+
+g3 <- metrics_ %>%
+  filter(metric == 'recall') %>%
+  mutate(x = value.a, y = value.c) %>%
+  plot_(labs = c('Complete', 'Complicated'), title = 'Recall')
+
+g4 <- metrics_ %>%
+  filter(metric == 'precision') %>%
+  mutate(x = value.a, y = value.c) %>%
+  plot_(labs = c('Complete', 'Complicated'), title = 'Precision')
+
+g <- ggarrange(
+  g1, g3,
+  g2, g4,
+  nrow = 2, ncol = 2,
+  legend = 'bottom', common.legend = TRUE
+)
+g <- g %>% annotate_figure(
+  fig.lab = 'Alignment',
+  fig.lab.size = 20,
+  bottom = text_grob(main_condition, size = 16)
+)
+g %>% plot
+
+path_ <- here(output_dir, paste(prefix, 'main', 'recall.precision.all', 'scatter.pdf', sep = '_'))
+ggsave(file = path_, plot = g, dpi = 300, width = 6.4 * 2, height = 3.2 * 3.5)
+
+```

@@ -1,0 +1,2023 @@
+---
+title: "Evaluation of DE analysis results on simulation data"
+date: "`r format(Sys.time(), '%Y/%m/%d')`"
+output: html_notebook
+params:
+  output_dir: NULL
+editor_options:
+  chunk_output_type: console
+---
+
+## 1. Preparations
+
+```{r, setup, include=FALSE, cache=FALSE}
+# Note: Do not display big number as exponential
+options(scipen = 100)
+
+library(tidyverse)
+
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+
+utl <- new.env(); source(here::here("scripts/utils/base.R"), utl); source(here::here("scripts/utils/plot.R"), utl)
+h.align <- new.env(); source(here::here("scripts/helpers/align_helper.R"), h.align)
+h.quant <- new.env(); source(here::here("scripts/helpers/quant_helper.R"), h.quant)
+h.de <- new.env(); source(here::here("scripts/helpers/de_helper.R"), h.de)
+
+PREFIX <- "sim"
+
+output_dir <- ifelse(length(params$output_dir) > 0, params$output_dir, "results/figs_tbls")
+
+inputs <- bind_rows(
+  data.frame(
+    dataset = "main",
+    condition = c(0),
+    input_dir = here::here("results", c("test01_main")),
+    stringsAsFactors = FALSE
+  )
+)
+
+input_true <- here::here("results/sim_cntmat/gencode/params_sim.txt")
+```
+
+## 2. Load assets
+
+```{r}
+
+path_annotation <- here::here("shared/assets/references/grch38/annotations/gencode/gencode.v31.annotation.gtf")
+
+annotations <- utl$load_annotations()
+annotation_main <- annotations$gencode
+
+transcript_lengths <- path_annotation %>%
+  utl$load_gtf(types = c("exon")) %>%
+  group_by(transcript_id) %>%
+  summarise(length = sum(end - start + 1)) %>%
+  data.frame
+
+exons_transcript <- path_annotation %>%
+  utl$load_gtf(types = c("exon")) %>%
+  group_by(transcript_id) %>%
+  summarise(n_exons = n()) %>%
+  data.frame
+
+transcripts_gene <- path_annotation %>%
+  utl$load_gtf(types = c("transcript")) %>%
+  group_by(gene_id) %>%
+  summarise(n_transcripts = n()) %>%
+  data.frame
+
+# FIXME: Gene-level biotype
+features <- bind_rows(
+  annotation_main %>%
+    distinct(transcript_id, transcript_name, biotype) %>%
+    set_names(c("feature_id", "feature_name", "biotype")),
+  annotation_main %>%
+    distinct(gene_id, gene_name, gene_type) %>%
+    set_names(c("feature_id", "feature_name", "biotype"))
+)
+
+# DEBUG:
+paths_mappability <- here::here(
+  # "results/mappabilities/100",
+  "results/mappabilities/100/_work",
+  c(
+    "gencode.v31.transcripts.formatted.gencode.v31.transcripts.formatted.aligned.merged.sqlite"
+  )
+) %>% set_names(c("gencode"))
+
+load_mappability <- function(path, feature_type) {
+  conn <- RSQLite::SQLite() %>% RSQLite::dbConnect(path, synchronous = "off")
+
+  df <- RSQLite::dbGetQuery(conn, paste0("select * from ", feature_type, "_mappabilities;")) %>%
+    set_names(c("feature_id", "mappability")) %>%
+    left_join(features, by = "feature_id")
+
+  RSQLite::dbDisconnect(conn)
+
+  df
+}
+
+feature_types <- c("gene", "transcript")
+
+mappabilities <- paths_mappability %>%
+  enframe(value = "path") %>%
+  crossing(feature_type = feature_types) %>%
+  mutate(data = map2(path, feature_type, ~ load_mappability(.x, .y)))
+
+```
+
+## 3. Load results
+
+### 3.1 Alignment
+
+```{r}
+inputs_align <- inputs %>%
+  mutate(
+    path = map(input_dir, ~ utl$find_paths(.x, h.align$PATTERNS$transcript) %>% unlist)
+  ) %>%
+  unnest(path) %>%
+  mutate(
+    name = paste(condition, map_chr(path, ~ .x %>% utl$to_combination()), sep = ".")
+  )
+
+results_align_metrics <- inputs_align %>%
+  mutate(
+    data = map(path, ~ h.align$load_result(.x, "metrics"))
+  ) %>%
+  mutate(mean_recall = map(data, ~ mean(.x$recall)) %>% unlist) %>%
+  mutate(mean_precision = map(data, ~ mean(.x$precision)) %>% unlist) %>% 
+  mutate(mean_f1 = map(data, ~ mean(.x$f1)) %>% unlist)
+
+results_align_transcript_metrics <- inputs_align %>%
+  mutate(
+    data = map(path, ~ h.align$load_result(.x, "transcript_metrics"))
+  )
+
+results_align_confusion_matrix <- inputs_align %>%
+  mutate(
+    data = map(path, ~ h.align$load_result(.x, "confusion_matrix") %>% select(-c(2)))
+  )
+```
+
+### 3.2 Quantification
+```{r}
+result_quant_true <- input_true %>%
+  h.quant$load_groundtruth() %>%
+  h.quant$fill_lack(annotation_main)
+
+result_quant_true_cpm <- result_quant_true %>%
+  h.quant$to_cpm()
+
+inputs_quant <- inputs %>%
+  mutate(
+    path = map(input_dir, ~ utl$find_paths(.x, h.quant$PATTERNS$transcript) %>% unlist)
+  ) %>%
+  unnest(path) %>%
+  mutate(
+    name = paste(condition, map_chr(path, ~ .x %>% utl$to_combination()), sep = ".")
+  )
+
+inputs_quant <- inputs_quant %>%
+  mutate(combination = utl$.combination(name)) %>%
+  filter(grepl('0.gencode-', name)) %>%
+  utl$filter_by_combination()
+
+results_quant_est <- inputs_quant %>%
+  mutate(
+    data = map2(
+      path, name,
+      ~ h.quant$load_result(.x) %>% 
+        h.quant$fill_lack(., annotations[[utl$annotation_used(.y)]])
+    )
+  ) %>%
+  select(-condition, -input_dir, -path)
+
+results_quant_est_cpm <- results_quant_est %>%
+  mutate(
+    data = map(data,
+               ~ h.quant$to_cpm(.x) %>%
+                 utl$mean_by_group(prefixes = c("CTRL", "CASE"), ordered = FALSE)
+    )
+  )
+
+results_quant_est_tpm <- results_quant_est %>%
+  mutate(
+    data = map(data,
+               ~ h.quant$to_tpm(.x, transcript_lengths) %>%
+                 utl$mean_by_group(prefixes = c("CTRL", "CASE"), ordered = FALSE)
+    )
+  )
+
+feature_ids_expressed <- c(list(result_quant_true), results_quant_est$data) %>%
+  map(~ .x %>% mutate(sum = rowSums(select(., where(is.numeric))))) %>%
+  map(~ .x %>% filter(sum > 0) %>% pull(feature_id)) %>%
+  Reduce(function(x, y) c(x, y), .) %>% unique
+
+feature_ids_expressed %>%
+  data.frame %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "feature_ids_expressed", "data.tsv", sep = "_"))
+    )
+
+result_quant_true_tpm <- result_quant_true %>%
+  filter(feature_id %in% feature_ids_expressed) %>%
+  h.quant$to_tpm(transcript_lengths)
+
+# NOTE: Append mean column
+result_quant_true_tpm <- result_quant_true_tpm %>%
+  mutate(mean = result_quant_true_tpm %>%
+           select(where(is.numeric)) %>%
+           apply(1, mean)
+  )
+```
+
+### 3.3 DE
+
+```{r}
+result_de_true <- input_true %>%
+  h.de$load_groundtruth() %>%
+  h.de$fill_lack(annotation_main) %>%
+  utl$set_biotype(annotation_main)
+
+inputs_de <- inputs %>%
+  mutate(path = map(input_dir, ~ utl$find_paths(.x, h.de$PATTERNS$transcript) %>% unlist)) %>%
+  unnest(path) %>%
+  mutate(name = paste(
+    condition,
+    map_chr(path, ~ .x %>% utl$to_combination()),
+    sep = "."
+  ))
+
+inputs_de <- inputs_de %>%
+  filter(grepl('0.gencode-', name))
+
+.load_result_de <- function(p, n) {
+  p %>% message
+
+  .f <- get(paste0("load_", utl$tool(n)), envir = h.de)
+  if (utl$tool(n) == "ballgown") .f <- partial(.f, coef = -1)
+
+  .f(p)
+}
+
+results_de_est <- inputs_de %>%
+  mutate(
+    data = map2(
+      path, name,
+      ~ .load_result_de(.x, .y) %>%
+        h.de$fill_lack(., annotations[[utl$annotation_used(.y)]])
+    )
+  ) %>%
+  select(-condition, -input_dir, -path)
+```
+
+## 4. Characterization of biotypes
+
+### 4.1 Calculate metrics
+
+```{r}
+biotype_feature_ids <- bind_rows(
+  annotation_main %>%
+    distinct(feature_id, biotype) %>%
+    utl$split_tibble("biotype") %>%
+    map(~ intersect(.$feature_id, feature_ids_expressed)) %>%
+    enframe(name = "biotype", value = "feature_ids"),
+  annotation_main %>%
+    mutate(biotype = "all") %>%
+    distinct(feature_id, biotype) %>%
+    utl$split_tibble("biotype") %>%
+    map(~ intersect(.$feature_id, feature_ids_expressed)) %>%
+    enframe(name = "biotype", value = "feature_ids")
+)
+
+biotype_metrics_align <- results_align_confusion_matrix %>%
+  crossing(biotype_feature_ids) %>%
+  mutate(metrics = map2(
+    data,
+    feature_ids,
+    ~ h.align$calc_metrics(confusion_matrix = .x, feature_ids = .y) %>%
+      pivot_longer(-1, names_to = "metric")
+  )) %>%
+  select(dataset, name, biotype, metrics)
+
+biotype_metrics_align %>%
+  select(name, biotype, metrics) %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "biotype_metrics_align", "data.tsv", sep = "_"))
+  )
+
+biotype_metrics_quant <- results_quant_est_tpm %>%
+  crossing(biotype_feature_ids) %>%
+  mutate(metrics = map2(
+    data,
+    feature_ids,
+    ~ h.quant$calc_metrics(est = .x, true = result_quant_true_tpm, feature_ids = .y) %>%
+      pivot_longer(cols = everything(), names_to = "metric")
+  )) %>%
+  select(dataset, name, biotype, metrics)
+
+biotype_metrics_quant %>%
+  select(name, biotype, metrics) %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "biotype_metrics_quant", "data.tsv", sep = "_"))
+  )
+
+biotype_metrics_de <- results_de_est %>%
+  crossing(biotype_feature_ids) %>%
+  mutate(metrics = map2(
+    data,
+    feature_ids,
+    ~ h.de$calc_metrics(est = .x, true = result_de_true, feature_ids = .y) %>%
+      pivot_longer(cols = everything(), names_to = "metric")
+  )) %>%
+  select(dataset, name, biotype, metrics)
+
+biotype_metrics_de %>%
+  select(name, biotype, metrics) %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "biotype_metrics_de", "data.tsv", sep = "_"))
+    )
+```
+
+### 4.2 Draw plots
+
+#### 4.2.1 Alignment
+```{r}
+.data <- biotype_metrics_align %>%
+  unnest(metrics) %>%
+  group_by(dataset, metric, name, biotype) %>%
+  summarize(mean = mean(value)) %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  mutate(biotype = utl$to_factor(biotype)) %>% 
+  group_by(dataset, metric) %>%
+  nest %>%
+  ungroup(dataset)
+
+.draw <- function(data_, metric) {
+  g <- utl$plot_bar(
+    data = data_,
+    group = "abbr",
+    facet.by = NULL,
+    tilt = FALSE,
+    theme_ = NULL,
+    list(
+      x = "biotype",
+      y = "mean",
+      ylim = c(0.95, 1.00),
+      xlab = "",
+      ylab = utl$to_lab(metric),
+      add = "mean"
+    )
+  )
+}
+
+.data$plot <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw)
+
+map2(
+  .data$plot,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "biotype_bar_align.pdf",
+    width = 3.2 * 3.2,
+    height = 3.2 * 3
+  )
+)
+
+rm(.data, .draw)
+```
+
+#### 4.2.2 Quantification
+
+```{r}
+.data <- biotype_metrics_quant %>%
+  unnest(metrics) %>%
+  group_by(dataset, metric, name, biotype) %>%
+  summarize(mean = mean(value)) %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  mutate(biotype = utl$to_factor(biotype)) %>% 
+  group_by(dataset, metric) %>%
+  nest %>%
+  ungroup(dataset)
+
+.draw <- function(data_, metric) {
+  g <- utl$plot_bar(
+    data = data_,
+    group = "abbr",
+    facet.by = NULL,
+    tilt = FALSE,
+    theme_ = NULL,
+    list(
+      x = "biotype",
+      y = "mean",
+      xlab = "",
+      ylab = utl$to_lab(metric)
+    )
+  )
+}
+
+.data$plot <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw)
+
+map2(
+  .data$plot,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "biotype_bar_quant.pdf",
+    width = 3.2 * 3.2,
+    height = 3.2 * 3
+  )
+)
+
+rm(.data, .draw)
+```
+
+#### 4.2.3 DE
+
+```{r}
+.data <- biotype_metrics_de %>%
+  unnest(metrics) %>%
+  group_by(dataset, metric, name, biotype) %>%
+  summarize(mean = mean(value)) %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  mutate(biotype = utl$to_factor(biotype)) %>% 
+  group_by(dataset, metric) %>%
+  nest %>%
+  ungroup(dataset)
+
+.draw <- function(data_, metric) {
+  g <- utl$plot_bar(
+    data = data_,
+    group = "abbr",
+    facet.by = NULL,
+    tilt = FALSE,
+    theme_ = NULL,
+    list(
+      x = "biotype",
+      y = "mean",
+      xlab = "",
+      ylab = utl$to_lab(metric)
+    )
+  )
+}
+
+.data$plot <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw)
+
+map2(
+  .data$plot,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "biotype_bar_de.pdf",
+    width = 3.2 * 3.2,
+    height = 3.2 * 3
+  )
+)
+
+rm(.data, .draw)
+```
+
+## 5. Impact of mappability
+
+### 5.1 Calculate metrics
+
+```{r}
+NUM_BINS = 4
+
+mappability_feature_ids <- mappabilities %>%
+  unnest(data) %>%
+  filter(feature_id %in% feature_ids_expressed) %>%
+  utl$set_bin("mappability", num_bins = NUM_BINS) %>%
+  select(bin, feature_id) %>%
+  group_by(bin) %>%
+  nest %>%
+  mutate(feature_ids = map(data, ~ pull(.x, feature_id))) %>%
+  select(-data) %>%
+  arrange(bin)
+
+mappability_metrics_align <- results_align_confusion_matrix %>%
+  crossing(mappability_feature_ids) %>%
+  mutate(metrics = map2(
+    data,
+    feature_ids,
+    ~ h.align$calc_metrics(confusion_matrix = .x, feature_ids = .y) %>%
+      pivot_longer(-1, names_to = "metric")
+  )) %>%
+  select(dataset, name, bin, metrics)
+
+mappability_metrics_align %>%
+  select(dataset, name, bin, metrics) %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "mappability_metrics_align", "data.tsv", sep = "_"))
+  )
+
+mappability_metrics_quant <- results_quant_est_tpm %>%
+  crossing(mappability_feature_ids) %>%
+  mutate(metrics = map2(
+    data,
+    feature_ids,
+    ~ h.quant$calc_metrics(est = .x, true = result_quant_true_tpm, feature_ids = .y) %>%
+      pivot_longer(cols = everything(), names_to = "metric")
+  )) %>%
+  select(dataset, name, bin, metrics)
+
+mappability_metrics_quant %>%
+  select(dataset, name, bin, metrics) %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "mappability_metrics_quant", "data.tsv", sep = "_"))
+  )
+
+mappability_metrics_de <- results_de_est %>%
+  crossing(mappability_feature_ids) %>%
+  mutate(metrics = map2(
+    data,
+    feature_ids,
+    ~ h.de$calc_metrics(est = .x, true = result_de_true, feature_ids = .y) %>%
+      pivot_longer(cols = everything(), names_to = "metric")
+  )) %>%
+  select(dataset, name, bin, metrics)
+
+mappability_metrics_de %>%
+  select(dataset, name, bin, metrics) %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "mappability_metrics_de", "data.tsv", sep = "_"))
+    )
+```
+
+### 5.2 Draw plots
+
+#### 5.2.1 Alignment
+
+```{r}
+.data <- mappability_metrics_align %>%
+  unnest(metrics) %>%
+  group_by(dataset, metric, name, bin) %>%
+  summarize(mean = mean(value)) %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  group_by(dataset, metric) %>%
+  nest %>%
+  ungroup(dataset)
+
+calc_coef <- function(x) {
+  .x <- x %>% mutate(bin = as.numeric(factor(bin)))
+  
+  .coef <- lm(.x$mean ~ .x$bin)$coefficients
+  
+  tibble(intercept = .coef[[1]],
+         slope = .coef[[2]])
+}
+
+.coef <- .data %>%
+  unnest(data) %>%
+  select(metric, dataset, name, bin, mean) %>%
+  group_by(metric, dataset, name) %>%
+  nest %>%
+  mutate(coef = map(data,
+                    calc_coef)) %>%
+  select(-data)
+
+.coef %>%
+  unnest(coef) %>%
+  write_tsv(here::here(
+    output_dir,
+    paste(PREFIX, "mappability_coefficients_align", "data.tsv", sep = "_")
+  ))
+
+.draw <- function(data_, metric) {
+  g <- utl$plot_line(
+    data = data_,
+    group = "abbr",
+    facet.by = NULL,
+    tilt = TRUE,
+    theme_ = NULL,
+    list(
+      x = "bin",
+      y = "mean",
+      ylim = c(0.95, 1.00),
+      xlab = "Bin of transcript mappability",
+      ylab = utl$to_lab(metric)
+    )
+  )
+}
+
+.data$plot <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw)
+
+map2(
+  .data$plot,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "mappability_line_align.pdf",
+    width = 3.2 * 1.6,
+    height = 3.2 * 1.5
+  )
+)
+
+plots_top_align <- .data$plot
+
+rm(.data, .draw)
+```
+
+#### 5.2.2 Qunatification
+
+```{r}
+.data <- mappability_metrics_quant %>%
+  unnest(metrics) %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  mutate(bin = factor(bin)) %>% 
+  group_by(dataset, metric) %>%
+  nest %>%
+  ungroup(dataset)
+
+.coef <- .data %>%
+  unnest(data) %>%
+  select(metric, dataset, name, bin, value) %>%
+  group_by(metric, dataset, name) %>%
+  nest %>%
+  mutate(coef = map(data,
+                    calc_coef)) %>%
+  select(-data)
+
+.coef %>%
+  unnest(coef) %>%
+  write_tsv(here::here(
+    output_dir,
+    paste(PREFIX, "mappability_coefficients_quant", "data.tsv", sep = "_")
+  ))
+
+.draw <- function(data_, metric) {
+  g <- utl$plot_line(
+    data = data_,
+    group = "abbr",
+    facet.by = NULL,
+    tilt = TRUE,
+    theme_ = NULL,
+    list(
+      x = "bin",
+      y = "value",
+      xlab = "Bin of transcript mappability",
+      ylab = utl$to_lab(metric)
+    )
+  )
+}
+
+.data$plot <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw)
+
+map2(
+  .data$plot,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "mappability_line_quant.pdf",
+    width = 3.2 * 3.2,
+    height = 3.2 * 3
+  )
+)
+
+plots_top_quant <- .data$plot
+
+rm(.data, .draw)
+```
+
+#### 5.2.3 DE
+```{r}
+.data <- mappability_metrics_de %>%
+  unnest(metrics) %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  mutate(bin = factor(bin)) %>% 
+  group_by(dataset, metric) %>%
+  nest %>%
+  ungroup(dataset)
+
+.coef <- .data %>%
+  unnest(data) %>%
+  select(metric, dataset, name, bin, value) %>%
+  group_by(metric, dataset, name) %>%
+  nest %>%
+  mutate(coef = map(data,
+                    calc_coef)) %>%
+  select(-data)
+
+.coef %>%
+  unnest(coef) %>%
+  write_tsv(here::here(
+    output_dir,
+    paste(PREFIX, "mappability_coefficients_de", "data.tsv", sep = "_")
+  ))
+
+.draw <- function(data_, metric) {
+  g <- utl$plot_line(
+    data = data_,
+    group = "abbr",
+    facet.by = NULL,
+    tilt = TRUE,
+    theme_ = NULL,
+    list(
+      x = "bin",
+      y = "value",
+      xlab = "Bin of transcript mappability",
+      ylab = utl$to_lab(metric)
+    )
+  )
+}
+
+.data$plot <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw)
+
+map2(
+  .data$plot,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "mappability_line_de.pdf",
+    width = 3.2 * 3.2,
+    height = 3.2 * 3
+  )
+)
+
+plots_top_de <- .data$plot
+
+rm(.data, .draw)
+```
+
+## 6. Impact of transcript abundance
+
+### 6.1 Calculate metrics
+
+```{r}
+# NOTE: bin, ctrl: feature_ids1, case: feature_ids2
+abundance_feature_ids <- result_quant_true_tpm %>%
+  select(-mean) %>%
+  pivot_longer(-feature_id, names_to = "group", values_to = "value") %>%
+  utl$set_bin("value", num_bins = NUM_BINS, exclude = TRUE) %>%
+  select(feature_id, group, bin) %>%
+  pivot_wider(names_from = group, values_from = feature_id) %>%
+  dplyr::rename(feature_ids1 = "ctrl", feature_ids2 = "case") %>%
+  arrange(bin)
+
+# NOTE: for evaluation of DE
+mean_abundance_feature_ids <- result_quant_true_tpm %>%
+  select(feature_id, mean) %>%
+  utl$set_bin("mean", num_bins = NUM_BINS, exclude = TRUE) %>%
+  select(bin, feature_id) %>%
+  group_by(bin) %>%
+  nest %>%
+  mutate(feature_ids = map(data, ~ pull(.x, feature_id))) %>%
+  select(-data) %>%
+  arrange(bin)
+
+abundance_metrics_align <- results_align_confusion_matrix %>%
+  crossing(mean_abundance_feature_ids) %>%
+  mutate(metrics = map2(
+    data,
+    feature_ids,
+    ~ h.align$calc_metrics(confusion_matrix = .x, feature_ids = .y) %>%
+      pivot_longer(-1, names_to = "metric")
+  )) %>%
+  select(dataset, name, bin, metrics)
+
+abundance_metrics_align %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "abundance_metrics_align", "data.tsv", sep = "_"))
+  )
+
+.calc_metrics2 <- partial(h.quant$calc_metrics2, true = result_quant_true_tpm)
+
+abundance_metrics_quant <- results_quant_est_tpm %>%
+  crossing(abundance_feature_ids) %>%
+  mutate(metrics = pmap(
+    list(
+      est = data,
+      feature_ids1 = feature_ids1,
+      feature_ids2 = feature_ids2
+    ),
+    .calc_metrics2
+  ) %>% map( ~ .x %>% pivot_longer(cols = everything(), names_to = "metric"))) %>%
+  select(dataset, name, bin, metrics)
+
+abundance_metrics_quant %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "abundance_metrics_quant", "data.tsv", sep = "_"))
+    )
+
+abundance_metrics_de <- results_de_est %>%
+  crossing(mean_abundance_feature_ids) %>%
+  mutate(metrics = map2(
+    data,
+    feature_ids,
+    ~ h.de$calc_metrics(est = .x, true = result_de_true, feature_ids = .y) %>%
+      pivot_longer(cols = everything(), names_to = "metric")
+  )) %>%
+  select(dataset, name, bin, metrics)
+
+abundance_metrics_de %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "abundance_metrics_de", "data.tsv", sep = "_"))
+    )
+```
+
+### 6.2 Draw line plot
+
+#### 6.2.1 Alignment
+
+```{r}
+.data <- abundance_metrics_align %>%
+  unnest(metrics) %>%
+  group_by(dataset, metric, name, bin) %>%
+  summarize(mean = mean(value)) %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  group_by(dataset, metric) %>%
+  nest %>%
+  ungroup(dataset)
+
+calc_coef <- function(x) {
+  .x <- x %>% mutate(bin = as.numeric(factor(bin)))
+  
+  .coef <- lm(.x$mean ~ .x$bin)$coefficients
+  
+  tibble(intercept = .coef[[1]],
+         slope = .coef[[2]])
+}
+
+.coef <- .data %>%
+  unnest(data) %>%
+  select(metric, dataset, name, bin, mean) %>%
+  group_by(metric, dataset, name) %>%
+  nest %>%
+  mutate(coef = map(data,
+                    calc_coef)) %>%
+  select(-data)
+
+.coef %>%
+  unnest(coef) %>%
+  write_tsv(here::here(
+    output_dir,
+    paste(PREFIX, "abundance_coefficients_align", "data.tsv", sep = "_")
+  ))
+
+.draw <- function(data_, metric) {
+  g <- utl$plot_line(
+    data = data_,
+    group = "abbr",
+    facet.by = NULL,
+    tilt = TRUE,
+    theme_ = NULL,
+    list(
+      x = "bin",
+      y = "mean",
+      ylim = c(0.95, 1.00),
+      xlab = "Bin of transcript abundance",
+      ylab = utl$to_lab(metric)
+    )
+  )
+}
+
+.data$plot <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw)
+
+map2(
+  .data$plot,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "abundance_line_align.pdf",
+    width = 3.2 * 3.2,
+    height = 3.2 * 3
+  )
+)
+
+plots_right_align <- .data$plot
+
+rm(.data, .draw)
+```
+
+#### 6.2.2 Qunatification
+
+```{r}
+.data <- abundance_metrics_quant %>%
+  unnest(metrics) %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  group_by(dataset, metric) %>%
+  nest %>%
+  ungroup(dataset)
+
+.coef <- .data %>%
+  unnest(data) %>%
+  select(metric, dataset, name, bin, value) %>%
+  group_by(metric, dataset, name) %>%
+  nest %>%
+  mutate(coef = map(data,
+                    calc_coef)) %>%
+  select(-data)
+
+.coef %>%
+  unnest(coef) %>%
+  write_tsv(here::here(
+    output_dir,
+    paste(PREFIX, "abundance_coefficients_quant", "data.tsv", sep = "_")
+  ))
+
+.draw <- function(data_, metric) {
+  g <- utl$plot_line(
+    data = data_,
+    group = "abbr",
+    facet.by = NULL,
+    tilt = TRUE,
+    theme_ = NULL,
+    list(
+      x = "bin",
+      y = "value",
+      xlab = "Bin of transcript abundance",
+      ylab = utl$to_lab(metric)
+    )
+  )
+}
+
+.data$plot <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw)
+
+map2(
+  .data$plot,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "abundance_line_quant.pdf",
+    width = 3.2 * 3.2,
+    height = 3.2 * 3
+  )
+)
+
+plots_right_quant <- .data$plot
+
+rm(.data, .draw)
+```
+
+#### 6.2.3 DE
+```{r}
+.data <- abundance_metrics_de %>%
+  unnest(metrics) %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  group_by(dataset, metric) %>%
+  nest %>%
+  ungroup(dataset)
+
+.coef <- .data %>%
+  unnest(data) %>%
+  select(metric, dataset, name, bin, value) %>%
+  group_by(metric, dataset, name) %>%
+  nest %>%
+  mutate(coef = map(data,
+                    calc_coef)) %>%
+  select(-data)
+
+.coef %>%
+  unnest(coef) %>%
+  write_tsv(here::here(
+    output_dir,
+    paste(PREFIX, "abundance_coefficients_de", "data.tsv", sep = "_")
+  ))
+
+.draw <- function(data_, metric) {
+  g <- utl$plot_line(
+    data = data_,
+    group = "abbr",
+    facet.by = NULL,
+    tilt = TRUE,
+    theme_ = NULL,
+    list(
+      x = "bin",
+      y = "value",
+      xlab = "Bin of transcript abundance",
+      ylab = utl$to_lab(metric)
+    )
+  )
+}
+
+.data$plot <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw)
+
+map2(
+  .data$plot,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "abundance_line_de.pdf",
+    width = 3.2 * 3.2,
+    height = 3.2 * 3
+  )
+)
+
+plots_right_de <- .data$plot
+
+rm(.data, .draw)
+```
+
+## 7. Impact of mappability and abundance
+
+### 7.1 Calculate metrics
+
+```{r}
+mappability_abundance_feature_ids1 <- left_join(
+  mappability_feature_ids %>%
+    unnest(feature_ids),
+  abundance_feature_ids %>%
+    select(-feature_ids2) %>%
+    unnest(feature_ids1) %>%
+    dplyr::rename(feature_ids = "feature_ids1"),
+  by = "feature_ids") %>%
+  dplyr::rename(feature_id = "feature_ids") %>%
+  relocate(feature_id) %>%
+  arrange(bin.x, bin.y)
+
+mappability_abundance_feature_ids2 <- left_join(
+  mappability_feature_ids %>%
+    unnest(feature_ids),
+  abundance_feature_ids %>%
+    select(-feature_ids1) %>%
+    unnest(feature_ids2) %>%
+    dplyr::rename(feature_ids = "feature_ids2"),
+  by = "feature_ids") %>%
+  dplyr::rename(feature_id = "feature_ids") %>%
+  relocate(feature_id) %>%
+  arrange(bin.x, bin.y)
+
+# NOTE: bin.x for mappability; bin.y for abundance
+# NOTE: bin.y including NA value derived from undefined records
+mappability_abundance_feature_ids <- left_join(
+  mappability_abundance_feature_ids1 %>%
+    group_by(bin.x, bin.y) %>%
+    nest,
+  mappability_abundance_feature_ids2 %>%
+    group_by(bin.x, bin.y) %>%
+    nest,
+  by = c("bin.x", "bin.y")
+) %>%
+  mutate(feature_ids1 = map(data.x, ~ pull(.x, feature_id))) %>% 
+  mutate(feature_ids2 = map(data.y, ~ pull(.x, feature_id))) %>%
+  select(!starts_with("data"))
+
+mappability_abundance_feature_ids_count_matrix <- cbind(
+  mappability_abundance_feature_ids1 %>%
+    group_by(bin.x, bin.y) %>%
+    summarise(n = n()) %>%
+    pivot_wider(everything(), names_from = bin.y, values_from = n) %>%
+    rename_if(is.numeric, ~ paste0("ctrl:", .x)) %>%
+    ungroup,
+  mappability_abundance_feature_ids2 %>%
+    group_by(bin.x, bin.y) %>%
+    summarise(n = n()) %>%
+    pivot_wider(everything(), names_from = bin.y, values_from = n) %>%
+    rename_if(is.numeric, ~ paste0("case:", .x)) %>%
+    ungroup %>%
+    select(-1)
+)
+
+mappability_abundance_feature_ids_count_matrix %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "mappability_abundance_feature_ids_count_matrix", "data.tsv", sep = "_"))
+    )
+
+# NOTE: bin.x for mappability; bin.y for abundance
+# NOTE: bin.y including NA value derived from undefined records
+mappability_mean_abundance_feature_ids <- left_join(
+  mappability_feature_ids %>%
+    unnest(feature_ids),
+  mean_abundance_feature_ids %>%
+    unnest(feature_ids),
+  by = "feature_ids") %>%
+  dplyr::rename(feature_id = "feature_ids") %>%
+  relocate(feature_id) %>%
+  arrange(bin.x, bin.y)
+
+mappability_mean_abundance_feature_ids <- mappability_mean_abundance_feature_ids %>%
+  group_by(bin.x, bin.y) %>%
+  nest %>%
+  mutate(feature_ids = map(
+    data,
+    ~ pull(.x, feature_id)
+  )) %>%
+  mutate(feature_ids_lncrna = map(
+    feature_ids,
+    ~ intersect(.x, deframe(biotype_feature_ids)$lncrna)
+  )) %>%
+  mutate(feature_ids_mrna = map(
+    feature_ids,
+    ~ intersect(.x, deframe(biotype_feature_ids)$mrna)
+  )) %>%
+  select(-data)
+
+mappability_mean_abundance_feature_ids_count_matrix <- cbind(
+  mappability_mean_abundance_feature_ids %>%
+    ungroup %>%
+    select(1:2),
+  mappability_mean_abundance_feature_ids %>%
+    ungroup %>%
+    select(-(1:2)) %>%
+    apply(c(1, 2), function(x) length(x[[1]]))
+)
+
+mappability_mean_abundance_feature_ids_count_matrix %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "mappability_mean_abundance_feature_ids_count_matrix", "data.tsv", sep = "_"))
+    )
+
+mappability_abundance_metrics_align <- results_align_confusion_matrix %>%
+  crossing(filter(mappability_mean_abundance_feature_ids, !is.na(bin.y))) %>%
+  mutate(metrics = map2(
+    data,
+    feature_ids,
+    ~ h.align$calc_metrics(confusion_matrix = .x, feature_ids = .y) %>%
+      pivot_longer(cols = -1, names_to = "metric")
+  )) %>%
+  select(dataset, name, bin.x, bin.y, metrics)
+
+
+mappability_abundance_metrics_align %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "mappability_abundance_metrics_align", "data.tsv", sep = "_"))
+    )
+
+mappability_abundance_metrics_quant <- results_quant_est_tpm %>%
+  crossing(filter(mappability_abundance_feature_ids, !is.na(bin.y))) %>%
+  mutate(metrics = pmap(
+    list(
+      est = data,
+      feature_ids1 = feature_ids1,
+      feature_ids2 = feature_ids2
+    ),
+    .calc_metrics2
+  ) %>% map( ~ .x %>% pivot_longer(cols = everything(), names_to = "metric"))) %>%
+  select(dataset, name, bin.x, bin.y, metrics)
+
+mappability_abundance_metrics_quant %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "mappability_abundance_metrics_quant", "data.tsv", sep = "_"))
+    )
+
+mappability_abundance_metrics_de <- results_de_est %>%
+  crossing(filter(mappability_mean_abundance_feature_ids, !is.na(bin.y))) %>%
+  mutate(metrics = map2(
+    data,
+    feature_ids,
+    ~ h.de$calc_metrics(est = .x, true = result_de_true, feature_ids = .y) %>%
+      pivot_longer(cols = everything(), names_to = "metric")
+  )) %>%
+  select(dataset, name, bin.x, bin.y, metrics)
+
+mappability_abundance_metrics_de %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "mappability_abundance_metrics_de", "data.tsv", sep = "_"))
+    )
+```
+
+### 7.2 Draw plots
+
+#### 7.2.1 Alignment
+
+```{r}
+.data <- mappability_abundance_metrics_align %>%
+  unnest(metrics) %>%
+  group_by(dataset, metric, name, bin.x, bin.y) %>%
+  summarize(mean = mean(value)) %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  mutate(label_bin.y = fct_relabel(bin.y, ~ paste0("True abundance: ", .x))) %>%
+  group_by(dataset, metric) %>%
+  nest %>%
+  ungroup(dataset)
+
+.draw1 <- function(data_, metric) {
+  g <- utl$plot_bar(
+    data = data_,
+    group = "abbr",
+    facet.by = c("bin.y", "bin.x"),
+    tilt = TRUE,
+    theme_ = NULL,
+    list(
+      x = "abbr",
+      y = "mean",
+      ylim = c(0.95, 1.00),
+      xlab = "Bin of transcript mappability",
+      ylab = "Bin of true transcript abundance"
+    )
+  )
+}
+
+.draw2 <- function(data_, metric) {
+  g <- utl$plot_line(
+    data = data_,
+    group = "abbr",
+    facet.by = c("label_bin.y"),
+    tilt = TRUE,
+    theme_ = NULL,
+    list(
+      x = "bin.x",
+      y = "mean",
+      xlab = "Bin of transcript mappability",
+      ylab = utl$to_lab(metric)
+    )
+  )
+}
+
+.data$plot1 <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw1)
+
+.data$plot2 <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw2)
+
+map2(
+  .data$plot1,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "mappability_abundance_bar_align.pdf",
+    width = 3.2 * 1.6,
+    height = 3.2 * 1.5
+  )
+)
+
+map2(
+  .data$plot2,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "mappability_abundance_line_align.pdf",
+    width = 3.2 * 1.6,
+    height = 3.2 * 1.5
+  )
+)
+
+plots_main_align <- .data$plot1
+
+rm(.data, .draw)
+```
+
+#### 7.2.2 Qunatification
+
+```{r}
+.data <- mappability_abundance_metrics_quant %>%
+  unnest(metrics) %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  mutate(label_bin.y = fct_relabel(bin.y, ~ paste0("True abundance: ", .x))) %>%
+  group_by(dataset, metric) %>%
+  nest %>%
+  ungroup(dataset)
+
+.draw1 <- function(data_, metric) {
+  g <- utl$plot_bar(
+    data = data_,
+    group = "abbr",
+    facet.by = c("bin.y", "bin.x"),
+    tilt = TRUE,
+    theme_ = NULL,
+    list(
+      x = "abbr",
+      y = "value",
+      xlab = "Bin of transcript mappability",
+      ylab = "Bin of true transcript abundance"
+    )
+  )
+}
+
+.draw2 <- function(data_, metric) {
+  g <- utl$plot_line(
+    data = data_,
+    group = "abbr",
+    facet.by = c("label_bin.y"),
+    tilt = TRUE,
+    theme_ = NULL,
+    list(
+      x = "bin.x",
+      y = "value",
+      xlab = "Bin of transcript mappability",
+      ylab = utl$to_lab(metric)
+    )
+  )
+}
+
+.data$plot1 <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw1)
+
+.data$plot2 <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw2)
+
+map2(
+  .data$plot1,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "mappability_abundance_bar_quant.pdf",
+    width = 3.2 * 3.2,
+    height = 3.2 * 3
+  )
+)
+
+map2(
+  .data$plot2,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "mappability_abundance_line_quant.pdf",
+    width = 3.2 * 3.2,
+    height = 3.2 * 3
+  )
+)
+
+plots_main_quant <- .data$plot1
+plots_main_l_quant <- .data$plot2
+
+rm(.data, .draw1, .draw2)
+```
+
+#### 7.2.3 DE
+```{r}
+.data <- mappability_abundance_metrics_de %>%
+  unnest(metrics) %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  mutate(label_bin.y = fct_relabel(bin.y, ~ paste0("True abundance: ", .x))) %>%
+  group_by(dataset, metric) %>%
+  nest %>%
+  ungroup(dataset)
+
+.draw1 <- function(data_, metric) {
+  g <- utl$plot_bar(
+    data = data_,
+    group = "abbr",
+    facet.by = c("bin.y", "bin.x"),
+    tilt = TRUE,
+    theme_ = NULL,
+    list(
+      x = "abbr",
+      y = "value",
+      xlab = "Bin of transcript mappability",
+      ylab = "Bin of true transcript abundance"
+    )
+  )
+}
+
+.draw2 <- function(data_, metric) {
+  g <- utl$plot_line(
+    data = data_,
+    group = "abbr",
+    facet.by = c("label_bin.y"),
+    tilt = TRUE,
+    theme_ = NULL,
+    list(
+      x = "bin.x",
+      y = "value",
+      xlab = "Bin of transcript mappability",
+      ylab = utl$to_lab(metric)
+    )
+  )
+}
+
+.data$plot1 <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw1)
+
+.data$plot2 <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw2)
+
+map2(
+  .data$plot1,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "mappability_abundance_bar_de.pdf",
+    width = 3.2 * 3.2,
+    height = 3.2 * 3
+  )
+)
+
+map2(
+  .data$plot2,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "mappability_abundance_line_de.pdf",
+    width = 3.2 * 3.2,
+    height = 3.2 * 3
+  )
+)
+
+plots_main_de <- .data$plot1
+
+rm(.data, .draw1, .draw2)
+```
+
+## 8. Arrange plots (5 - 7)
+
+```{r}
+bin_levels <- mappability_abundance_metrics_de$bin.x %>% levels
+
+.arrange <- function(main, top, right) {
+  .scale <- function(x) sprintf("%.2f", x)
+  .theme1 <- theme(
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 11)
+  )
+  
+  .theme2 <- theme(
+    axis.text.x = element_text(size = 11),
+    axis.text.y = element_text(angle = -90, hjust = 0.5, size = 14),
+    axis.title.y = element_blank(),
+    strip.text = element_blank()
+  )
+  
+  .top <- top + .theme1 + ggpubr::rremove("legend") + scale_y_continuous(labels = .scale)
+  .right <- right + ggpubr::rotate() + scale_x_discrete(limits = rev(bin_levels)) + .theme2 + ggpubr::rremove("legend") + scale_y_continuous(labels = .scale)
+  g <- ggpubr::ggarrange(
+    plotlist = list(.top, NULL, main, .right),
+    ncol = 2, nrow = 2, align = "hv",
+    widths = c(3, 1), heights = c(1, 3),
+    common.legend = TRUE, legend = "bottom"
+  )
+  
+  g
+}
+
+plots_align <- tibble(
+  main = plots_main_align,
+  top = plots_top_align,
+  right = plots_right_align
+) %>%
+  pmap(.arrange) %>%
+  set_names(c("recall", "precision", "f1"))
+
+plots_align <- map2(
+  plots_align,
+  names(plots_align),
+  ~ .x %>% utl$add_condition_lab(
+    lab_add = paste0("metric = ", utl$to_lab(.y)),
+    var_remove = "main"
+  )
+)
+
+map2(
+  plots_align,
+  paste0(names(plots_align), "_align"),
+  ~ utl$save_plot(.x, .y, "arranged.pdf", width = 3.2 * 6, height = 3.2 * 6)
+)
+
+
+plots_quant <- tibble(
+  main = plots_main_quant,
+  top = plots_top_quant,
+  right = plots_right_quant
+) %>%
+  pmap(.arrange) %>%
+  set_names(c("spearman", "nrmse"))
+
+plots_quant <- map2(
+  plots_quant,
+  names(plots_quant),
+  ~ .x %>% utl$add_condition_lab(
+    lab_add = paste0("metric = ", utl$to_lab(.y)),
+    var_remove = "main"
+  )
+)
+
+map2(
+  plots_quant,
+  paste0(names(plots_quant), "_quant"),
+  ~ utl$save_plot(.x, .y, "arranged.pdf", width = 3.2 * 6, height = 3.2 * 6)
+)
+
+plots_de <-tibble(
+  main = plots_main_de,
+  top = plots_top_de,
+  right = plots_right_de
+) %>%
+  pmap(.arrange) %>%
+  set_names(c("spearman", "nrmse", "auc"))
+
+plots_de <- map2(
+  plots_de,
+  names(plots_de),
+  ~ .x %>% utl$add_condition_lab(
+    lab_add = paste0("metric = ", utl$to_lab(.y)),
+    var_remove = "main"
+  )
+)
+
+map2(
+  plots_de,
+  paste0(names(plots_de), "_de"),
+  ~ utl$save_plot(.x, .y, "arranged.pdf", width = 3.2 * 6, height = 3.2 * 6)
+)
+
+.add_lab <- function(g, text) {
+  (g + theme(plot.margin= unit(c(2, 1.5, 0.5, 0.5), "lines"))) %>%
+    ggpubr::annotate_figure(fig.lab = text, fig.lab.size = 21, fig.lab.face = "bold")
+}
+
+g <- ggpubr::ggarrange(
+  ggpubr::ggarrange(plots_top_align[[3]] %>% .add_lab("(A)"),
+                    NULL,
+                    ncol = 2, widths = c(1.1, 0.90)),
+  plots_main_l_quant[[1]] %>% .add_lab("(B)"),
+  ncol = 1,
+  nrow = 2,
+  align = "hv",
+  heights = c(1, 2),
+  common.legend = FALSE,
+  legend = "bottom"
+)
+
+g %>% utl$save_plot("sim_f1_spearman", "arranged_align_quant.pdf", width = 3.2 * 3.2, height = 3.2 * 5)
+```
+## 9. Additonal figures
+### 9.1 True transcript abundance vs. Estimated transcript abundance
+```{r, greet=TRUE}
+mappability_comparisions <- mappability_feature_ids %>%
+  h.quant$get_comparisions(ests = results_quant_est_tpm, true = result_quant_true_tpm) %>%
+  select(-feature_ids)
+mappability_comparisions %>%
+  unnest(comparision) %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  filter(dataset == "main") %>%
+  unnest(value) %>%
+  utl$set_biotype(annotation_main) %>%
+  filter(biotype %in% c("lncrna", "mrna")) %>%
+  mutate(biotype = utl$to_factor(biotype)) %>%
+  mutate(log2.value.x = log2(value.x + 1)) %>%
+  mutate(log2.value.y = log2(value.y + 1)) %>% summary
+plot_ <- mappability_comparisions %>%
+  unnest(comparision) %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  filter(dataset == "main") %>%
+  unnest(value) %>%
+  utl$set_biotype(annotation_main) %>%
+  filter(biotype %in% c("lncrna", "mrna")) %>%
+  mutate(biotype = utl$to_factor(biotype)) %>%
+  mutate(log2.value.x = log2(value.x + 1)) %>%
+  mutate(log2.value.y = log2(value.y + 1)) %>%
+  ggscatter(
+    x = "log2.value.x", y = "log2.value.y",
+    size = 0.2, color = "biotype", fill = "biotype", palette = c("#E7B800", "#00AFBB"), rug = TRUE, ellipse.alpha = 0.25,
+    xlab = "True transcript abundance (log2(TPM + 1))", ylab = "Estimated transcript abundance (log2(TPM + 1))",
+    facet.by = c("bin", "abbr")
+  ) + geom_abline(slope = 1, intercept = 0, linetype = "dotted") + theme(legend.position = "bottom")
+utl$save_plot(plot_, "quant", "mappability_tpm_scatter_quant.pdf", width = 3.2 * 3, height = 3.2 * 3)
+```
+### 9.2 Frequency of each tile
+```{r}
+# NOTE: Additional plots
+data_ <- list(
+  mappability_mean_abundance_feature_ids_count_matrix %>%
+    select(1:2, feature_ids) %>%
+    dplyr::rename(count = "feature_ids"),
+  mappability_mean_abundance_feature_ids_count_matrix %>%
+    select(1:2, feature_ids_lncrna) %>%
+    dplyr::rename(count = "feature_ids_lncrna"),
+  mappability_mean_abundance_feature_ids_count_matrix %>%
+    select(1:2, feature_ids_mrna) %>%
+    dplyr::rename(count = "feature_ids_mrna")
+) %>%
+  set_names(c("all", "lncrna", "mrna")) %>%
+  enframe(value = "data")
+map2(
+  data_$data, data_$name,
+  ~ pivot_wider(.x, everything(), names_from = bin.y, values_from = value) %>%
+    write_tsv(
+      here::here(output_dir,
+           paste(PREFIX, paste("mappability_mean_abundance_feature_ids_count_matrix", .y, "data.tsv", sep = "_"))
+      )
+    )
+)
+plots_ <- map2(
+  data_$data, data_$name,
+  ~ utl$plot_tile(
+    .x,
+    "bin.x",
+    "bin.y",
+    "bin.y",
+    title = utl$to_lab(.y),
+    xlab = "Mappability",
+    ylab = "True transcript abundance"
+  )
+) %>% set_names(data_$name)
+map2(
+  plots_,
+  names(plots_),
+  ~ utl$save_plot(.x, .y, "mappability_mean_abundance_tile.pdf", width = 3.2 * 3.2, height = 3.2 * 3)
+)
+```
+### 9.3 Calculate slopes and Intercepts
+```{r}
+exons_transcript <- exons_transcript %>%
+  dplyr::rename(feature_id = "transcript_id")
+exons_transcript_feature_ids <- exons_transcript %>%
+  filter(feature_id %in% feature_ids_expressed) %>%
+  utl$
+  ("n_exons") %>%
+  select(feature_id, bin) %>%
+  utl$split_tibble("bin") %>%
+  map(pull, feature_id) %>%
+  enframe(name = "bin", value = "feature_ids") %>%
+  arrange(bin)
+exons_transcript_metrics_quant <- exons_transcript_feature_ids %>%
+  h.quant$calc_metrics(ests = results_quant_est_cpm, true = result_quant_true_cpm) %>%
+  select(-feature_ids) %>%
+  pivot_longer(-1, names_to = "metric")
+transcript_lengths <- transcript_lengths %>%
+  dplyr::rename(feature_id = "transcript_id")
+transcript_length_feature_ids <- transcript_lengths %>%
+  filter(feature_id %in% feature_ids_expressed) %>%
+  utl$set_bin("length") %>%
+  select(feature_id, bin) %>%
+  utl$split_tibble("bin") %>%
+  map(pull, feature_id) %>%
+  enframe(name = "bin", value = "feature_ids") %>%
+  arrange(bin)
+transcript_length_metrics_quant <- transcript_length_feature_ids %>%
+  h.quant$calc_metrics(ests = results_quant_est_cpm, true = result_quant_true_cpm) %>%
+  select(-feature_ids) %>%
+  pivot_longer(-1, names_to = "metric")
+data_ <- transcript_length_metrics_quant %>%
+  unnest(value) %>%
+  group_by(metric, dataset, name) %>%
+  nest
+slopes_ <- data_ %>%
+  unnest(data) %>%
+  select(metric, dataset, bin, name, value) %>%
+  group_by(metric, dataset, name) %>%
+  nest %>%
+  mutate(slope = map_dbl(data,
+                     utl$calc_slope)) %>%
+  select(-data)
+slopes_ %>% write_tsv(
+  here::here(output_dir, paste(PREFIX, "transcript_length_slope_quant", "data.tsv", sep = "_"))
+)
+data_ <- exons_transcript_metrics_quant %>%
+  unnest(value) %>%
+  group_by(metric, dataset, name) %>%
+  nest
+slopes_ <- data_ %>%
+  unnest(data) %>%
+  select(metric, dataset, bin, name, value) %>%
+  group_by(metric, dataset, name) %>%
+  nest %>%
+  mutate(slope = map_dbl(data,
+                     utl$calc_slope)) %>%
+  select(-data)
+slopes_ %>% write_tsv(
+  here::here(output_dir, paste(PREFIX, "exons_transcript_slope_quant", "data.tsv", sep = "_"))
+)
+```
+### 9.4 Obtain pairwise intersection among DE sets
+```{r}
+results_de_est <- results_de_est %>%
+  mutate(result_sig = map(data,
+                  ~ h.de$extract_de(.x, t_logfc = 1, t_pval = 0.05)))
+mappability_feature_ids_sig <- mappability_feature_ids %>%
+  mutate(result_sig = map(feature_ids,
+                          function(x) {
+                            results_de_est %>%
+                              mutate(feature_ids = map(
+                                result_sig,
+                                function(y) intersect(x, y$feature_id)
+                              )) %>% select(-data, -result_sig)
+                          }
+  ))
+mappability_feature_ids_sig <- mappability_feature_ids_sig %>%
+  select(-feature_ids) %>%
+  unnest(result_sig) %>%
+  filter(dataset == "main") %>%
+  utl$decorate_metrics() %>%
+  mutate(scenario = utl$to_factor(scenario)) %>%
+  utl$filter_by_combination("main") %>%
+  group_by(dataset, bin) %>% nest
+mappability_intersects_sig <- mappability_feature_ids_sig %>%
+  mutate(rel = map(data, h.de$calc_intersects)) %>%
+  mutate(abs = map(data, h.de$calc_intersects, rel = FALSE)) %>%
+  select(-data) %>%
+  pivot_longer(-c(1:2), names_to = "method") %>%
+  select(method, dataset, bin, everything())
+map2(
+  mappability_intersects_sig$value,
+  mappability_intersects_sig %>% select(1:3) %>% apply(1, paste, collapse = "."),
+  ~ write_tsv(
+    data.frame(.x) %>% rownames_to_column(var = "Combination"),
+    here::here(output_dir, paste(PREFIX, .y, "intersects.tsv", sep = "_")
+    )
+  )
+)
+data_ <- mappability_intersects_sig %>%
+  filter(method == "rel")
+plots_ <- map2(
+  dat_$value,
+  dat_$bin,
+  ~ utl$plot_intersect_(.x) %>% utl$add_condition_lab(lab_add = paste0("bin of mappability = ", .y))
+)
+map2(
+  plots_,
+  data_ %>%
+    select(-value) %>%
+    apply(1, paste, collapse = ".") %>% tolower %>% gsub("\u2265 ", "", .) %>% gsub("%", "", .),
+  ~ utl$save_plot(.x, .y, "intersections_de.pdf", width = 3.2 * 4, height = 3.2 * 4)
+)
+rm(plots_)
+```
+
+### X.X. Distribution of mappability and true transcript abundance
+```{r}
+.mappabilities <- mappabilities %>%
+  filter(tolower(name) == "gencode" & feature_type == "transcript") %>%
+  pull(data) %>% .[[1]]
+
+.abundances_true <- result_quant_true_tpm %>%
+  select(-mean) %>%
+  pivot_longer(-1, names_to = "sample") %>%
+  mutate(sample = factor(sample, levels = c("ctrl", "case") )) %>%
+  mutate(log10_tpm = log10(value + 1)) %>%
+  filter(feature_id %in% feature_ids_expressed)
+
+# NOTE: STAR-RSEM
+.abundances_est <- results_quant_est_tpm %>%
+  filter(name == "0.gencode-star-rsem") %>%
+  pull(data) %>%
+  .[[1]] %>%
+  pivot_longer(-1, names_to = "sample") %>%
+  mutate(log10_tpm = log10(value + 1)) %>%
+  filter(feature_id %in% feature_ids_expressed)
+
+# .mean_abundances <- result_quant_true_tpm %>%
+#   select(feature_id, mean) %>%
+#   mutate(abundance = log10(mean + 1))
+.breaks_m <- seq(
+  min(.mappabilities$mappability),
+  max(.mappabilities$mappability),
+  length.out = 96
+)
+
+.breaks_a <- seq(
+  min(.abundances_true$log10_tpm),
+  max(.abundances_true$log10_tpm),
+  length.out = 96
+)
+
+.mappabilities <- .mappabilities %>%
+  mutate(bin = cut(.mappabilities$mappability, breaks = .breaks_m, include.lowest = TRUE, right = TRUE))
+.abundances_true <- .abundances_true %>% 
+  mutate(bin = cut(.abundances_true$log10_tpm, breaks = .breaks_a, include.lowest = TRUE, right = TRUE))
+.mappabilities_abundances <- .abundances_true %>%
+  left_join(.abundances_est,
+            by = c("feature_id", "sample")) %>%
+  left_join(.mappabilities,
+            by = "feature_id")
+.mappabilities_abundances_cntmat <- .mappabilities_abundances %>%
+  group_by(bin.x, bin.y) %>%
+  summarise(n = n()) %>%
+  pivot_wider(everything(), names_from = bin.y, values_from = n) %>% 
+  ungroup %>%
+  column_to_rownames(var = "bin.x") %>% as.matrix
+
+# fig <- plotly::plot_ly(z = ~.mappabilities_abundances_cntmat, type = "heatmap")
+p3ds <- plotly::plot_ly(z = ~.mappabilities_abundances_cntmat) %>% plotly::add_surface()
+p3d1 <- .mappabilities_abundances %>%
+  filter(biotype %in% c("mrna", "lncrna")) %>%
+  mutate(biotype = utl$to_lab(biotype)) %>%
+  # filter(log10_tpm.x < 0.025) %>%
+  # filter(log10_tpm.y < 0.025) %>%
+  # filter(mappability < 0.25) %>%
+  plotly::plot_ly(
+    type = "scatter3d",
+    x = ~ mappability,
+    y = ~ log10_tpm.x,
+    z = ~ log10_tpm.y ,
+    mode = "markers",
+    color = ~ biotype,
+    colors = c(mRNA = "#00AFBB", lncRNA = "#E7B800"),
+    size = 0.01,
+    opacity = 0.75
+  ) %>% plotly::layout(scene = list(xaxis = list(title = "Mappability"), yaxis = list(title = "Groundtruth (log10 TPM)"), zaxis = list(title = "Estimated (log10 TPM)")))
+
+htmlwidgets::saveWidget(p3d1, here::here(output_dir, "mappability_abundance_distribution_biotype_3d.html"))
+
+p3d2 <- .mappabilities_abundances %>%
+  filter(biotype %in% c("mrna", "lncrna")) %>%
+  mutate(biotype = utl$to_lab(biotype)) %>%
+  filter(log10_tpm.x < 0.25) %>%
+  # filter(log10_tpm.y < 0.025) %>%
+  plotly::plot_ly(
+    type = "scatter3d",
+    x = ~ mappability,
+    y = ~ log10_tpm.x,
+    z = ~ log10_tpm.y ,
+    mode = "markers",
+    color = ~ biotype,
+    colors = c(mRNA = "#00AFBB", lncRNA = "#E7B800"),
+    size = 0.01,
+    opacity = 0.1
+  ) %>% plotly::layout(scene = list(xaxis = list(title = "Mappability"), yaxis = list(title = "Groundtruth (log10 TPM)"), zaxis = list(title = "Estimated (log10 TPM)")))
+
+htmlwidgets::saveWidget(p3d2, here::here(output_dir, "mappability_abundance_distribution_biotype_3d.html"))
+
+.theme <- theme(
+  text = element_text(size = 18),
+  legend.position = "bottom",
+  legend.title = element_blank(),
+  legend.text = element_text(size = 16),
+  strip.text.x = element_text(size = 16)
+)
+
+.draw <- function(data_, x, labs) {
+  .theme <- theme(
+    text = element_text(size = 18),
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 18)
+  )
+  g <- data_ %>%
+    filter(biotype %in% c("protein_coding", "lncrna")) %>%
+    mutate(biotype = utl$to_lab(biotype)) %>%
+    ggpubr::gghistogram(
+      x = x,
+      bins = 100,
+      rug = FALSE,
+      color = "biotype",
+      fill = "biotype",
+      alpha = 0.125,
+      xlab = labs[[1]],
+      ylab = labs[[2]],
+      # facet.by = "sample"
+    )
+  g <- g + .theme
+  g <-
+    g + scale_colour_manual(values = c(mRNA = "#00AFBB", lncRNA = "#E7B800"))
+  g <-
+    g + scale_fill_manual(values = c(mRNA = "#00AFBB", lncRNA = "#E7B800"))
+  g
+}
+
+.g_main <- .mappabilities_abundances %>%
+  filter(biotype %in% c("protein_coding", "lncrna")) %>%
+  mutate(biotype = utl$to_lab(biotype)) %>%
+  utl$plot_scatter_(
+    group_ = "biotype",
+    lims = NULL,
+    tilt = FALSE,
+    facet.by = NULL,
+    theme_ = NULL,
+    list(
+      x = "mappability",
+      y = "log10_tpm.x",
+      xlab = "Mappability",
+      ylab = "True transcript abundance (log10 TPM + 1)",
+      size = 0.01,
+      alpha = 0.125
+    )
+  ) + scale_colour_manual(values = c(mRNA = "#00AFBB", lncRNA = "#E7B800")) + scale_fill_manual(values = c(mRNA = "#00AFBB", lncRNA = "#E7B800")) + guides(colour = guide_legend(override.aes = list(alpha = 1))) + .theme
+
+# facet by biotype
+# .g_main %>% ggpubr::facet(facet.by = c("sample", "biotype"))
+
+.g_top <- .mappabilities_abundances %>%
+  .draw("mappability", c("Mappability", "Frequency")) + .theme
+
+.g_top2 <- .mappabilities_abundances %>%
+  filter(value.x == 0) %>%
+  .draw("mappability", c("Mappability", "Frequency")) + .theme
+
+.g_right <- .mappabilities_abundances %>%
+  .draw("log10_tpm.x", c("True transcript abundance (log10 TPM + 1)", "Frequency")) + .theme
+
+.arrange <- function(main, top, right) {
+  .theme1 <- theme(
+    text = element_text(size = 18),
+    axis.text.x = element_blank(),
+    axis.text.y = element_text(size = 16),
+    plot.margin= unit(c(1, 0, 1, 0), "lines"),
+    legend.title = element_blank(),
+  )
+  .theme2 <- theme(
+    text = element_text(size = 18),
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_blank(),
+    axis.title.y = element_blank(),
+    strip.text = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "lines"),
+    legend.title = element_blank(),
+  )
+  .top <- top + theme_bw() + .theme1 + ggpubr::rremove("legend") + ggpubr::rremove("x.text") + ggpubr::rremove("x.ticks") + ggpubr::rremove("xlab")
+  .right <- right + theme_bw() + .theme2 + ggpubr::rotate() + ggpubr::rremove("legend") + ggpubr::rremove("y.text") + ggpubr::rremove("ylab") + ggpubr::rremove("y.ticks")
+  .main <- main + theme(plot.margin= unit(c(0, 0, 0, 0), "lines"))
+  g <- ggpubr::ggarrange(
+    plotlist = list(.top, NULL, .main, .right),
+    ncol = 2, nrow = 2, align = "hv", hjust = 2, vjust = 3,
+    widths = c(3, 1), heights = c(1, 3),
+    common.legend = TRUE, legend = "bottom"
+  )
+  g
+}
+
+g1 <- .arrange(.g_main, .g_top, .g_right) + theme(plot.background = element_rect(fill = "white"))
+
+g1
+
+file.path(output_dir, "sim_mappability_abundance_distribution_biotype.pdf") %>% ggsave(g1, width = 6.4 * 2.4, height = 4.8 * 2)
+
+# < 0.25 & > 0
+
+.g_main <- .mappabilities_abundances %>%
+  filter(log10_tpm.x < 0.25) %>%
+  filter(log10_tpm.x > 0) %>%
+  filter(biotype %in% c("mrna", "lncrna")) %>%
+  mutate(biotype = utl$to_lab(biotype)) %>%
+  utl$plot_scatter_(
+    group_ = "biotype",
+    lims = NULL,
+    tilt = FALSE,
+    facet.by = NULL,
+    theme_ = NULL,
+    list(
+      x = "mappability",
+      y = "log10_tpm.x",
+      xlab = "Mappability",
+      ylab = "Groundtruth (log10 TPM)",
+      size = 0.05,
+      alpha = 0.5
+    )
+  ) + scale_colour_manual(values = c(mRNA = "#00AFBB", lncRNA = "#E7B800")) + scale_fill_manual(values = c(mRNA = "#00AFBB", lncRNA = "#E7B800")) + guides(colour = guide_legend(override.aes = list(alpha = 1)))
+
+.g_top <- .mappabilities_abundances %>%
+  filter(log10_tpm.x < 0.25) %>%
+  filter(log10_tpm.x > 0) %>%
+  .draw("mappability", c("Mappability", "Frequency"))
+
+.g_right <- .mappabilities_abundances %>%
+  filter(log10_tpm.x < 0.25) %>%
+  filter(log10_tpm.x > 0) %>%
+  .draw("log10_tpm.x", c("Groundtruth (log10 TPM + 1)", "Frequency"))
+
+.arrange <- function(main, top, right) {
+  .theme1 <- theme(
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 11),
+    plot.margin = unit(c(1, 0, 1, 0), "lines")
+  )
+  .theme2 <- theme(
+    axis.text.x = element_text(size = 11),
+    axis.text.y = element_text(
+      angle = -90,
+      hjust = 0.5,
+      size = 14
+    ),
+    axis.title.y = element_blank(),
+    strip.text = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "lines")
+  )
+  .top <-
+    top + theme_bw() + .theme1 + ggpubr::rremove("legend") + ggpubr::rremove("x.text") + ggpubr::rremove("x.ticks") + ggpubr::rremove("xlab")
+  .right <-
+    right + theme_bw() + .theme2 + ggpubr::rotate() + ggpubr::rremove("legend") + ggpubr::rremove("y.text") + ggpubr::rremove("ylab") + ggpubr::rremove("y.ticks")
+  .main <- main + theme(plot.margin = unit(c(0, 0, 0, 0), "lines"))
+  g <- ggpubr::ggarrange(
+    plotlist = list(.top, NULL, .main, .right),
+    ncol = 2,
+    nrow = 2,
+    align = "hv",
+    hjust = 2,
+    vjust = 3,
+    widths = c(3, 1),
+    heights = c(1, 3),
+    common.legend = TRUE,
+    legend = "bottom"
+  )
+  g
+}
+
+g2 <-
+  .arrange(.g_main, .g_top, .g_right) + theme(plot.background = element_rect(fill = "white"))
+
+file.path(output_dir,
+          "mappability_abundance_distribution_biotype_focused.pdf") %>% ggsave(g2)
+```
+

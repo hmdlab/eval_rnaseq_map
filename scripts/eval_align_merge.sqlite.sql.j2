@@ -1,0 +1,22 @@
+-- Settings
+PRAGMA busy_timeout=864000000;
+PRAGMA cache_size=48000000;
+
+attach database '{{ src_database }}' as ext;
+
+create table if not exists sources(id integer primary key autoincrement, name text);
+
+insert into sources(name) values('{{ src_database }}');
+
+-- Merge
+create table if not exists metrics (source_id, recall, precision, f1);
+insert into metrics
+select 
+  (select id from sources where name = '{{ src_database }}' limit 1), * from ext.metrics;
+
+create table if not exists confusion_matrix(source_id, id, qname, tp, fp, tn, fn, total);
+insert into confusion_matrix
+select 
+  (select id from sources where name = '{{ src_database }}' limit 1), * from ext.confusion_matrix;
+
+vacuum;

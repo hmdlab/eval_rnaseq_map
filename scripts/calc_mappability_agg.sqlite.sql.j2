@@ -1,0 +1,80 @@
+-- Settings
+PRAGMA busy_timeout=864000000;
+PRAGMA cache_size=48000000;
+
+-- Import data
+.mode tabs
+drop table if exists unaligned_reads;
+create table if not exists unaligned_reads(id);
+.import '{{ tsv_unaligned }}' unaligned_reads
+
+vacuum;
+
+-- Calculate mappability
+attach database '{{ annotation }}' as ext;
+
+drop table if exists transcript_mappabilities_work;
+create table if not exists transcript_mappabilities_work (id, qname, n_true, n_false);
+insert into transcript_mappabilities_work
+  select
+    id,
+    qname,
+    cast(sum(true) as float) as n_true,
+    cast(sum(false) as float) as n_false
+    from transcript_alignment_truths
+    group by id;
+
+insert into transcript_mappabilities_work
+  select id, substr(id, 1, instr(id, '|') -1) as qname, 0 as n_true, 1 as n_false
+    from unaligned_reads;
+
+drop table if exists transcript_mappabilities;
+create table if not exists transcript_mappabilities (qname, mappability);
+insert into transcript_mappabilities
+  select
+    qname,
+    sum(pct_true) / count(*) as mappability
+    from
+    (select
+       qname,
+       n_true / (n_true + n_false) as pct_true
+       from transcript_mappabilities_work
+    ) t
+    group by qname;
+
+drop table if exists gene_mappabilities_work;
+create table if not exists gene_mappabilities_work (id, qname, n_true, n_false);
+insert into gene_mappabilities_work
+  select
+    id,
+    qname,
+    cast(sum(true) as float) as n_true,
+    cast(sum(false) as float) as n_false
+    from gene_alignment_truths
+    group by id;
+
+insert into gene_mappabilities_work
+  select id, an.gene_id as qname, 0 as n_true, 1 as n_false
+    from unaligned_reads ur
+      left join (select distinct transcript_id, gene_id from ext.annotations where feature = 'exon') an
+          on substr(ur.id, 1, instr(ur.id, '|') -1) = an.transcript_id;
+
+drop table if exists gene_mappabilities;
+create table if not exists gene_mappabilities (qname, mappability);
+insert into gene_mappabilities
+  select
+    qname,
+    sum(pct_true) / count(*) as mappability
+    from
+    (select
+       qname,
+       n_true / (n_true + n_false) as pct_true
+       from gene_mappabilities_work
+    ) t
+    group by qname;
+
+-- Drop data tables
+drop table if exists transcript_mappabilities_work;
+drop table if exists gene_mappabilities_work;
+
+vacuum;
