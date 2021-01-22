@@ -44,7 +44,7 @@ find_paths <- function(input_dir, patterns) {
   return(paths)
 }
 
-paths <- find_paths(here::here("references/annotations"), "gencode.v31.*.gtf") %>% unlist
+paths <- find_paths(here::here("assets/references/annotations"), "gencode.*.gtf") %>% unlist
 
 annotations <- paths %>%
   map(load_gtf) %>%
@@ -58,6 +58,12 @@ annotations <- paths %>%
   ) %>%
   mutate(version = factor(version)) %>%
   arrange(version)
+
+# NOTE: Remove GENOCDE-RefSeq
+annotations <- annotations %>% filter(!(name == "gencode.v31.v109.20190607.gtf"))
+
+annotations <- annotations %>%
+  mutate(canonical = ifelse(grepl("basic", name) | grepl("long_noncoding", name), FALSE, TRUE))
 ```
 
 ## 3. Overview
@@ -72,7 +78,14 @@ annotations <- annotations %>%
   ) %>%
   mutate(transcripts_gene = map(data,
                           ~ .x %>% filter(feature == "transcript") %>% group_by(gene_id) %>% summarize(n = n()))
+  ) %>%
+  mutate(n_genes_biotype = map(data,
+                          ~ .x %>% filter(feature == "gene") %>% group_by(gene_type) %>% summarize(n = n()))
+  ) %>% 
+  mutate(n_transcripts_biotype = map(data,
+                          ~ .x %>% filter(feature == "transcript") %>% group_by(transcript_type) %>% summarize(n = n()))
   )
+
 
 annotations_lncrna <- annotations %>%
   filter(grepl("long_noncoding_RNAs", name)) %>%
@@ -91,6 +104,7 @@ theme_ <- theme(
 )
 
 g1 <- annotations %>%
+  filter(canonical) %>%
   select(name, n_features) %>%
   unnest(2) %>%
   ggpubr::ggbarplot(
@@ -102,6 +116,7 @@ g1 <- annotations %>%
     ) + theme_
 
 g2 <- annotations %>%
+  filter(canonical) %>%
   select(name, transcripts_gene) %>%
   unnest(2) %>%
   mutate(n_log10 = log10(n)) %>%
@@ -113,6 +128,7 @@ g2 <- annotations %>%
     ) + theme_
 
 g3 <- annotations %>%
+  filter(canonical) %>%
   select(name, exons_transcript) %>%
   unnest(2) %>%
   mutate(n_log10 = log10(n)) %>%
@@ -127,6 +143,7 @@ list(g1, g2, g3)
 
 major_versions <- c("7", "10", "19", "21", "31")
 g4 <- annotations_lncrna %>%
+  filter(canonical) %>%
   filter(version %in% major_versions) %>%
   select(version, n_features) %>%
   unnest(2) %>%
@@ -159,6 +176,76 @@ g_45 <- ggpubr::ggarrange(
 )
 
 g_45 %>%
+  ggsave(plot = ., file = file.path(OUTPUT_DIR, "growth_of_gencode_lncrnas.pdf"), width = 9.6, height = 6.4)
+
+# genes (mRNA and lncRNA)
+n_genes_biotype <- bind_rows(
+  annotations_lncrna %>%
+    filter(version %in% major_versions) %>%
+    select(version, n_features) %>%
+    unnest(2) %>%
+    filter(feature == "gene") %>%
+    mutate(biotype = "lncRNA"),
+  annotations %>%
+    filter(canonical) %>%
+    filter(version %in% major_versions) %>%
+    select(version, n_genes_biotype) %>%
+    unnest(2) %>%
+    ungroup %>%
+    filter(gene_type == "protein_coding") %>%
+    tibble %>%
+    mutate(biotype = "mRNA") %>%
+    mutate(feature = "gene") %>%
+    select(-gene_type)
+)
+
+g6 <- n_genes_biotype %>%
+  ggpubr::ggbarplot(
+    x = "version", y = "n", fill = "biotype",
+    xlab = "GENCODE release", ylab = "Number of genes",
+    palette = c("#E7B800", "#00AFBB"),
+    position = position_dodge(0.9),
+    lab.size = 2.5,
+    label = TRUE, label.pos = "out",
+    ) + theme_ + theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+# genes (mRNA and lncRNA)
+n_transcripts_biotype <- bind_rows(
+  annotations_lncrna %>%
+    filter(version %in% major_versions) %>%
+    select(version, n_features) %>%
+    unnest(2) %>%
+    filter(feature == "transcript") %>%
+    mutate(biotype = "lncRNA"),
+  annotations %>%
+    filter(canonical) %>%
+    filter(version %in% major_versions) %>%
+    select(version, n_transcripts_biotype) %>%
+    unnest(2) %>%
+    filter(transcript_type == "protein_coding") %>%
+    tibble %>%
+    mutate(biotype = "mRNA") %>%
+    mutate(feature = "transcript") %>%
+    select(-transcript_type)
+)
+
+g7 <- n_transcripts_biotype %>%
+  ggpubr::ggbarplot(
+    x = "version", y = "n", fill = "biotype",
+    xlab = "GENCODE release", ylab = "Number of transcripts",
+    palette = c("#E7B800", "#00AFBB"),
+    position = position_dodge(0.9),
+    lab.size = 2.5,
+    label = TRUE, label.pos = "out",
+    ) + theme_ + theme(axis.text.x = element_text(angle = 0, hjust = 1), text = element_text(size = 18))
+
+g_67 <- ggpubr::ggarrange(
+  plotlist = list(g6, g7),
+  nrow = 1, ncol = 2,
+  common.legend = TRUE, legend = "bottom"
+)
+
+g_67 %>%
   ggsave(plot = ., file = file.path(OUTPUT_DIR, "growth_of_gencode.pdf"), width = 9.6, height = 6.4)
 ```
 

@@ -1,6 +1,7 @@
-# Utils
+# eval_rnaseq_map.helpers
+# ~~~~~~~~~~~~~~~~~~~~~~~
 #
-# This module procided some utiilty helpers for DE step
+# This module procided some utiilty helpers for Real data evaluation
 
 h.de <- new.env(); source(here::here("scripts/helpers/de_helper.R"), h.de)
 
@@ -8,29 +9,41 @@ library(tidyverse)
 
 
 load_qpcr_result <- function(input_path) {
-  # TODO: Eliminate NA value
-  result <- input_path %>% data.table::fread(sep = "\t", stringsAsFactors = FALSE)
+  .result <- input_path %>% data.table::fread(sep = "\t", stringsAsFactors = FALSE)
 
-  columns <- c("id_ref", "value", "flag_detection")
-  nsamples <- ncol(result) / length(columns)
-  groups <- rep(c("A", "B", "C", "D"), each = 4)
-  sample_ids <- paste0(groups, seq(1, 4))
+  .columns <- c("id_ref", "value", "flag_detection")
+  .nsamples <- ncol(.result) / length(.columns)
+  .groups <- rep(c("A", "B", "C", "D"), each = 4)
+  .sample_ids <- paste0(.groups, seq(1, 4))
 
-  colnames_ <- c()
-  for (s in sample_ids) {
-    colnames_ <- c(colnames_, paste(s, columns, sep = "_"))
+  .colnames <- c()
+  for (s in .sample_ids) {
+    .colnames <- c(.colnames, paste(s, .columns, sep = "_"))
   }
 
-  colnames(result) <- colnames_
-  colsel <- grep("value", colnames(result))
+  colnames(.result) <- .colnames
 
-  result <- result %>% select(colsel) %>% rowid_to_column(var = "ID")
-  colnames(result) <- colnames(result) %>% strsplit("_") %>% sapply("[", 1)
-  result <- result %>%
+  .values <- .result %>% select(ends_with("value")) %>% rowid_to_column(var = "ID")
+  .flags_detected <- .result %>% select(ends_with("flag_detection")) %>% rowid_to_column(var = "ID")
+
+  colnames(.values) <- colnames(.values) %>% strsplit("_") %>% sapply("[", 1)
+  colnames(.flags_detected) <- colnames(.flags_detected) %>% strsplit("_") %>% sapply("[", 1)
+
+  .flags_detected <- .flags_detected %>%
     pivot_longer(-1, names_to = "sample", values_to = "value") %>%
-    mutate(group = substr(sample, 1, 1))
+    mutate(group = substr(sample, 1, 1)) %>%
+    mutate(is_p = map_lgl(value, ~ .x == "P")) %>%
+    group_by(ID, group) %>%
+    summarize(n_p = sum(is_p)) %>%
+    mutate(passed = ifelse(n_p >= 3, TRUE, FALSE)) %>%
+    select(-n_p)
 
-  return(result)
+  .values <- .values %>%
+    pivot_longer(-1, names_to = "sample", values_to = "value") %>%
+    mutate(group = substr(sample, 1, 1)) %>%
+    left_join(.flags_detected, by = c("ID", "group"))
+
+  .values
 }
 
 

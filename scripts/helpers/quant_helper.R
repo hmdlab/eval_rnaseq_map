@@ -1,4 +1,5 @@
-# utl
+# eval_rnaseq_map.helpers
+# ~~~~~~~~~~~~~~~~~~~~~~~
 #
 # This module procided some utiilty helpers for quant step
 

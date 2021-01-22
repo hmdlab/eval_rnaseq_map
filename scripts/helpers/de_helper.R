@@ -1,4 +1,5 @@
-# Utils
+# eval_rnaseq_map.helpers
+# ~~~~~~~~~~~~~~~~~~~~~~~
 #
 # This module procided some utiilty helpers for DE step
 
@@ -44,7 +45,6 @@ load_edger <- function(path) {
 load_ebseq <- function(path) {
   .data <- data.table::fread(path, header = FALSE, skip = 1, sep = "\t", stringsAsFactors = FALSE)
 
-  # TBC: reveresed? <- yes
   .data <- .data %>% mutate(logfc = -1 * log2(V4))
   .data <- .data %>% select(V1, logfc, V2)
   colnames(.data) <- c("feature_id", "logfc", "pval_adj")
@@ -56,7 +56,6 @@ load_ebseq <- function(path) {
 load_ballgown <- function(path, coef = 1) {
   .data <- data.table::fread(path, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
 
-  # TBC: reveresed? <- no
   .data <- .data %>% mutate(logfc = coef * log2(as.numeric(fc)))
 
   tryCatch(
@@ -64,7 +63,6 @@ load_ballgown <- function(path, coef = 1) {
       .data <- .data %>% select(transcriptIDs, logfc, qval)
     },
     error = function(e) {
-      # XXX: Why do i need assign to global???
       .data <<- .data %>% select(`id`, logfc, qval)
     }
   )
@@ -78,13 +76,11 @@ load_ballgown <- function(path, coef = 1) {
 load_cuffdiff <- function(path) {
   .data <- data.table::fread(path, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
 
-  # TBC: filter? or not filter? <- filter
   .data <- .data %>% filter(status == "OK")
 
   .data <- .data %>% select(test_id, `log2(fold_change)`, q_value)
   colnames(.data) <- c("feature_id", "logfc", "pval_adj")
 
-  # TBC: Inf/-Inf replace to max/min value <- yes; replace to calculate NRMSE
   .max <- (.data %>% filter(is.finite(logfc)))$logfc %>% max()
   .min <- (.data %>% filter(is.finite(logfc)))$logfc %>% min()
 
@@ -126,13 +122,14 @@ load_sleuth_wt <- function(path, coef = -1) {
     .data <- .data %>% select(target_id, b, qval)
     colnames(.data) <- c("feature_id", "logfc", "pval_adj")
 
-    # TBC: reveresed? <- yes
     .data <- .data %>% mutate(logfc = coef * logfc)
   },
   error = function(e) {
-    message(paste0(e, "Return df excluded logfc column."))
-    .data <<- .data %>% select(target_id, qval)
-    colnames(.data) <<- c("feature_id", "pval_adj")
+    message(paste0(e, "Return df filled logfc column with NA."))
+    .data <<- .data %>%
+      mutate(b = NA) %>%
+      select(target_id, b, qval)
+    colnames(.data) <<- c("feature_id", "logfc", "pval_adj")
   })
 
   .data
@@ -208,6 +205,7 @@ fill_lack <- function(x, annotation) {
   join_ = dplyr::left_join,
   feature_ids = c()
 ) {
+
   .joined <- .join_fill(est, true, feature_ids, join_)
 
   tryCatch(
@@ -221,6 +219,31 @@ fill_lack <- function(x, annotation) {
   )
 
   .metric
+}
+
+
+counts_n_tested <- function(
+  est,
+  feature_ids = c()
+) {
+
+  n <- 0
+
+  tryCatch(
+    {
+      n <- est %>%
+        filter(feature_id %in% feature_ids & !is_lack) %>%
+        nrow
+    },
+    error = function(e) {
+      n <<- est %>%
+        filter(feature_id %in% feature_ids) %>%
+        nrow
+
+    }
+  )
+
+  n
 }
 
 
@@ -268,40 +291,6 @@ calc_auc <- function(x) {
 }
 
 
-# calc_metrics <- function(x, ests, true) {
-#   .f <- function(
-#     ids,
-#     ests,
-#     true,
-#     m = purrr::map,
-#     f
-#   ) {
-#     ests %>%
-#       mutate(
-#         value = m(
-#           data,
-#           ~ f(.x, true, ids)
-#         )
-#       ) %>% select(-data)
-#   }
-
-#   x %>%
-#     mutate(
-#       spearman = map(feature_ids, ~ .f(.x, ests, true, m = purrr::map_dbl, f = calc_spearman))
-#     ) %>%
-#     mutate(
-#       nrmse = map(feature_ids, ~ .f(.x, ests, true, m = purrr::map_dbl, f = calc_nrmse))
-#     ) %>%
-#     mutate(
-#       roc = map(feature_ids, ~ .f(.x, ests, true, f = calc_roc_df))
-#     ) %>%
-#     mutate(
-#       auc = map(roc, ~ calc_auc(.x))
-#     )
-# }
-
-
-
 calc_metrics <- function(est, true, feature_ids = c()) {
   .est <- est
   if (length(feature_ids) > 0) {
@@ -320,40 +309,6 @@ calc_metrics <- function(est, true, feature_ids = c()) {
     mutate(auc = map_dbl(roc, ~ calc_auc(.x)) %>% unlist) %>%
     select(-roc)
 }
-
-
-
-# calc_metrics <- function(x, ests, true) {
-#   .f <- function(
-#     ids,
-#     ests,
-#     true,
-#     m = purrr::map,
-#     f
-#   ) {
-#     ests %>%
-#       mutate(
-#         value = m(
-#           data,
-#           ~ f(.x, true, ids)
-#         )
-#       ) %>% select(-data)
-#   }
-
-#   x %>%
-#     mutate(
-#       spearman = map(feature_ids, ~ .f(.x, ests, true, m = purrr::map_dbl, f = calc_spearman))
-#     ) %>%
-#     mutate(
-#       nrmse = map(feature_ids, ~ .f(.x, ests, true, m = purrr::map_dbl, f = calc_nrmse))
-#     ) %>%
-#     mutate(
-#       roc = map(feature_ids, ~ .f(.x, ests, true, f = calc_roc_df))
-#     ) %>%
-#     mutate(
-#       auc = map(roc, ~ calc_auc(.x))
-#     )
-# }
 
 
 calc_intersects <- function(x, rel = TRUE) {

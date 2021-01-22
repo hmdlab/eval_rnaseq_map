@@ -1,4 +1,5 @@
-# Utils
+# eval_rnaseq_map.utils
+# ~~~~~~~~~~~~~~~~~~~~~
 #
 # This module procided some utiilty functions for plotting
 
@@ -21,7 +22,9 @@ to_lab <- function(x) {
     all = "All biotypes",
     mrna = "mRNA",
     protein_coding = "mRNA",
+    .protein_coding = "mRNA", # XXX
     lncrna = "lncRNA",
+    .lncrna = "lncRNA", # XX
     other = "Others",
     others = "Others",
     length = "Read length (bases)",
@@ -48,7 +51,7 @@ to_lab <- function(x) {
 }
 
 
-scale <- function(group) {
+scale_ <- function(group) {
   if (group == "abbr") {
     return(
       list(color = "tool",
@@ -130,14 +133,14 @@ plot_line <-
 
     .kwargs <- c(...)
 
-    .scale <- scale(group_)
+    .scale_ <- scale_(group_)
 
     .kwargs <- c(.kwargs, list(group = group_, color = group_, shape = group_))
 
     .default[names(.kwargs)] <- .kwargs
 
     .colors <- data_ %>%
-      distinct(get(!!group_), get(!!.scale$color)) %>%
+      distinct(get(!!group_), get(!!.scale_$color)) %>%
       deframe() %>%
       tolower()
 
@@ -146,7 +149,7 @@ plot_line <-
       set_names(names(.colors))
 
     .shapes <- data_ %>%
-      distinct(get(!!group_), get(!!.scale$shape)) %>%
+      distinct(get(!!group_), get(!!.scale_$shape)) %>%
       deframe() %>%
       factor()
 
@@ -173,6 +176,65 @@ plot_line <-
   }
 
 
+plot_box <-
+  function(data_,
+           group_,
+           tilt = FALSE,
+           facet.by = NULL,
+           theme_ = NULL,
+           ...) {
+
+    .default <- list(
+      x = "abbr",
+      y = "value",
+      group = group_,
+      color = group_
+    )
+
+    .kwargs <- c(...)
+
+    .scale_ <- scale_(group_)
+
+    .kwargs <- c(.kwargs, list(group = group_, color = group_))
+
+    .default[names(.kwargs)] <- .kwargs
+
+    .colors <- data_ %>%
+      distinct(get(!!group_), get(!!.scale_$color)) %>%
+      deframe() %>%
+      tolower()
+
+    .colors <- .colors %>%
+      to_color() %>%
+      set_names(names(.colors))
+
+    .shapes <- data_ %>%
+      distinct(get(!!group_), get(!!.scale_$shape)) %>%
+      deframe() %>%
+      factor()
+
+    .theme <- theme(
+      text = element_text(size = 18),
+      legend.position = "bottom",
+      legend.title = element_blank(),
+      legend.text = element_text(size = 16),
+      strip.text.x = element_text(size = 16)
+    )
+
+    if (length(theme_) > 0) .theme <- theme_
+
+    if (tilt) .theme <- .theme + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+    g <- do.call(ggpubr::ggboxplot, c(list(data_), .default))
+    g <- g + scale_colour_manual(name = group_, values = .colors)
+    g <- g + theme_bw() + .theme
+
+    if (length(facet.by)) g <- ggpubr::facet(g + theme_bw() + .theme, facet.by = facet.by)
+
+    g
+  }
+
+
 plot_bar <- function(data_,
                      group_ = NULL,
                      tilt = FALSE,
@@ -191,12 +253,12 @@ plot_bar <- function(data_,
 
   .kwargs <- c(...)
 
-  .scale <- scale(group_)
+  .scale_ <- scale_(group_)
 
   .default[names(.kwargs)] <- .kwargs
 
   .colors <- data_ %>%
-    distinct(get(!!group_), get(!!.scale$color)) %>%
+    distinct(get(!!group_), get(!!.scale_$color)) %>%
     deframe() %>%
     tolower()
 
@@ -228,7 +290,7 @@ plot_bar <- function(data_,
 }
 
 
-plot_bar_ <- function(data,
+plot_bar_ <- function(data_,
                       x = "bin",
                       y = "value",
                       facet.by,
@@ -250,7 +312,7 @@ plot_bar_ <- function(data,
     theme_ <-
       theme_ + theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-  g <- data %>%
+  g <- data_ %>%
     ggbarplot(
       x,
       y,
@@ -290,12 +352,12 @@ plot_scatter_ <- function(data_,
 
   .kwargs <- c(...)
 
-  .scale <- scale(group_)
+  .scale_ <- scale_(group_)
 
   .default[names(.kwargs)] <- .kwargs
 
   .colors <- data_ %>%
-    distinct(get(!!group_), get(!!.scale$color)) %>%
+    distinct(get(!!group_), get(!!.scale_$color)) %>%
     deframe() %>%
     tolower()
 
@@ -328,13 +390,13 @@ plot_scatter_ <- function(data_,
 
 
 plot_scatter <-
-  function(data,
+  function(data_,
            labs,
            title,
            lims,
            group,
            plot.title.vjust = -6) {
-    scale_ <- scale(group)
+    scale_ <- scale_(group)
 
     colors_ <- data %>%
       distinct(get(!!group), get(!!scale_$color)) %>%
@@ -360,7 +422,7 @@ plot_scatter <-
 
     lim_ <- lims[[tolower(title)]]
 
-    g <- data %>% ggscatter(
+    g <- data_ %>% ggpubr::ggscatter(
       "x",
       "y",
       color = group,
@@ -383,8 +445,8 @@ plot_scatter <-
 
 
 # NOTE: Plot ROC without color
-plot_roc_ <- function(data, lfc = 1, fdr = 0.05) {
-  g <- data %>%
+plot_roc_ <- function(data_, lfc = 1, fdr = 0.05) {
+  g <- data_ %>%
     ggplot2::ggplot(aes(d = D, m = M))
   g <- g + plotROC::geom_roc(n.cuts = FALSE,, size = 1)
 
@@ -397,9 +459,9 @@ plot_roc <- function(data,
                      facet.by,
                      lfc = 1,
                      fdr = 0.05) {
-  scale_ <- scale(group)
+  scale_ <- scale_(group)
 
-  colors_ <- data %>%
+  colors_ <- data_ %>%
     distinct(get(!!group), get(!!scale_$color)) %>%
     deframe() %>%
     tolower()
@@ -408,7 +470,7 @@ plot_roc <- function(data,
     to_color() %>%
     set_names(names(colors_))
 
-  shapes_ <- data %>%
+  shapes_ <- data_ %>%
     distinct(get(group), get(scale_$shape)) %>%
     deframe() %>%
     factor()
@@ -420,7 +482,7 @@ plot_roc <- function(data,
     legend.text = element_text(size = 18)
   )
 
-  g <- data %>%
+  g <- data_ %>%
     ggplot(aes(
       d = D,
       m = M,
@@ -444,17 +506,17 @@ plot_roc <- function(data,
 
 
 plot_tile <-
-  function(data,
+  function(data_,
            x,
            y,
            group,
            title = NULL,
            xlab = NULL,
            ylab = NULL) {
-    g <- data %>%
+    g <- data_ %>%
       ggplot(aes_string(x, y, group)) +
       geom_tile(aes(fill = count)) +
-      geom_text(aes(fill = data$count, label = round(data$count, 1)))
+      geom_text(aes(fill = data_$count, label = round(data_$count, 1)))
 
     g <- g + labs(title = title, x = xlab, y = ylab)
     g <- g + scale_fill_gradient(low = "#ffffff", high = "#24417d")
@@ -463,7 +525,7 @@ plot_tile <-
   }
 
 
-plot_intersect <- function(data) {
+plot_intersect <- function(data_) {
   theme_ <- theme(
     text = element_text(size = 18),
     plot.title = element_text(size = 18),
@@ -473,9 +535,9 @@ plot_intersect <- function(data) {
     legend.text = element_text(size = 14)
   )
 
-  limits_ <- data %>% min_max_()
+  limits_ <- data_ %>% min_max_()
 
-  g <- data %>%
+  g <- data_ %>%
     ggcorrplot::ggcorrplot(
       method = "circle",
       hc.order = TRUE,
@@ -494,7 +556,7 @@ plot_intersect <- function(data) {
 }
 
 
-plot_intersect_ <- function(data) {
+plot_intersect_ <- function(data_) {
   theme_ <- theme(
     text = element_text(size = 18),
     plot.title = element_text(size = 18),
@@ -504,9 +566,9 @@ plot_intersect_ <- function(data) {
     legend.text = element_text(size = 14)
   )
 
-  limits_ <- data %>% min_max_()
+  limits_ <- data_ %>% min_max_()
 
-  g <- data %>%
+  g <- data_ %>%
     ggcorrplot::ggcorrplot(
       method = "square",
       hc.order = TRUE,
@@ -547,3 +609,15 @@ save_plot <-
 
     return(NULL)
   }
+
+
+add_lab <- function(g, text) {
+  if(is.null(g)) return(NULL)
+  g %>% ggpubr::annotate_figure(fig.lab = text, fig.lab.size = 21, fig.lab.face = "bold")
+}
+
+
+rm_legend <- function(g) {
+  if (is.null(g)) return(NULL)
+  (g + guides(feature_type = FALSE)) + theme(legend.position = "none")
+}
