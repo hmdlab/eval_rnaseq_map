@@ -274,6 +274,60 @@ results_de_est <- inputs_de %>%
   select(-condition, -input_dir, -path)
 ```
 
+## 3. Calculate metrics
+```{r}
+n_features = length(feature_ids_expressed)
+
+metrics_align <- results_align_confusion_matrix %>%
+  mutate(metrics = map(
+    data,
+    ~ h.align$calc_metrics(confusion_matrix = .x, feature_ids = feature_ids_expressed) %>%
+      pivot_longer(-1, names_to = "metric")
+  )) %>%
+  mutate(n_features = n_features) %>%
+  select(dataset, name, n_features, metrics)
+
+metrics_align %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "metrics_align", "data.tsv", sep = "_"))
+  )
+
+metrics_quant <- results_quant_est_cpm %>%
+  mutate(metrics = map(
+    data,
+    ~ h.quant$calc_metrics(est = .x, true = result_quant_true_cpm, feature_ids = feature_ids_expressed) %>%
+      pivot_longer(cols = everything(), names_to = "metric")
+  )) %>%
+  mutate(n_features = n_features) %>%
+  select(dataset, name, n_features, metrics)
+
+metrics_quant %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "metrics_quant", "data.tsv", sep = "_"))
+  )
+
+metrics_de <- results_de_est %>%
+  mutate(metrics = map(
+    data,
+    ~ h.de$calc_metrics(est = .x, true = result_de_true, feature_ids = feature_ids_expressed) %>%
+      pivot_longer(cols = everything(), names_to = "metric")
+  )) %>%
+  mutate(n_features = n_features) %>%
+  mutate(n_tested = map_int(
+    data,
+    ~ h.de$counts_n_tested(est = .x, feature_ids = feature_ids_expressed)
+  )) %>%
+  select(dataset, name, n_features, n_tested, metrics)
+
+metrics_de %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "metrics_de", "data.tsv", sep = "_"))
+  )
+```
+
 ## 4. Impact of mappability
 
 ### 4.1 Calculate metrics
@@ -1694,3 +1748,131 @@ map2(
 utl$rm_private_vars()
 ```
 
+## 9. Additonal experiment (tailored)
+
+### 9.1 Preparations
+
+```{r, setup, include=FALSE, cache=FALSE}
+inputs_tailored <- bind_rows(
+  data.frame(
+    dataset = "sim_add",
+    condition = c(0),
+    input_dir = here::here("results", c("testXX_main")),
+    stringsAsFactors = FALSE
+  )
+)
+```
+
+
+### 9.2 Load results
+
+#### 9.2.2 Quantification
+```{r}
+inputs_quant_tailored <- inputs_tailored %>%
+  mutate(
+    path = map(input_dir, ~ utl$find_paths(.x, h.quant$PATTERNS$transcript) %>% unlist)
+  ) %>%
+  unnest(path) %>%
+  mutate(
+    name = paste(condition, map_chr(path, ~ .x %>% utl$to_combination()), sep = ".")
+  )
+
+inputs_quant_tailored <- inputs_quant_tailored %>%
+  mutate(combination = utl$.combination(name)) %>%
+  filter(grepl('0.gencode-', name)) %>%
+  utl$filter_by_combination()
+
+results_quant_est_tailored <- inputs_quant_tailored %>%
+  mutate(
+    data = map2(
+      path, name,
+      ~ h.quant$load_result(.x) %>% 
+        h.quant$fill_lack(., annotations[[utl$annotation_used(.y)]])
+    )
+  ) %>%
+  select(-condition, -input_dir, -path)
+
+results_quant_est_cpm_tailored <- results_quant_est_tailored %>%
+  mutate(
+    data = map(data,
+               ~ h.quant$to_cpm(.x) %>%
+                 utl$mean_by_group(prefixes = c("CTRL", "CASE"), ordered = FALSE)
+    )
+  )
+```
+
+#### 9.2.3 DE
+
+```{r}
+inputs_de_tailored <- inputs_tailored %>%
+  mutate(path = map(input_dir, ~ utl$find_paths(.x, h.de$PATTERNS$transcript) %>% unlist)) %>%
+  unnest(path) %>%
+  mutate(name = paste(
+    condition,
+    map_chr(path, ~ .x %>% utl$to_combination()),
+    sep = "."
+  ))
+
+inputs_de_tailored <- inputs_de_tailored %>%
+  mutate(combination = utl$.combination(name)) %>%
+  filter(grepl('0.gencode-', name)) %>%
+  utl$filter_by_combination()
+
+.load_result_de <- function(p, n) {
+  p %>% message
+
+  .f <- get(paste0("load_", utl$tool(n)), envir = h.de)
+  if (utl$tool(n) == "ballgown") .f <- partial(.f, coef = -1)
+
+  .f(p)
+}
+
+results_de_est_tailored <- inputs_de_tailored %>%
+  mutate(
+    data = map2(
+      path, name,
+      ~ .load_result_de(.x, .y) %>%
+        h.de$fill_lack(., annotations[[utl$annotation_used(.y)]])
+    )
+  ) %>%
+  select(-condition, -input_dir, -path)
+
+utl$rm_private_vars()
+```
+
+### 9.3 Calculate metrics
+```{r}
+metrics_quant_tailored <- results_quant_est_cpm_tailored %>%
+  mutate(metrics = map(
+    data,
+    ~ h.quant$calc_metrics(est = .x, true = result_quant_true_cpm, feature_ids = feature_ids_expressed) %>%
+      pivot_longer(cols = everything(), names_to = "metric")
+  )) %>%
+  mutate(n_features = n_features) %>%
+  select(dataset, name, n_features, metrics)
+
+metrics_quant_tailored %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "metrics_quant_tailored", "data.tsv", sep = "_"))
+  )
+
+metrics_de_tailored <- results_de_est_tailored %>%
+  mutate(metrics = map(
+    data,
+    ~ h.de$calc_metrics(est = .x, true = result_de_true, feature_ids = feature_ids_expressed) %>%
+      pivot_longer(cols = everything(), names_to = "metric")
+  )) %>%
+  mutate(n_features = n_features) %>%
+  mutate(n_tested = map_int(
+    data,
+    ~ h.de$counts_n_tested(est = .x, feature_ids = feature_ids_expressed)
+  )) %>%
+  select(dataset, name, n_features, n_tested, metrics)
+
+metrics_de_tailored %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "metrics_de_tailored", "data.tsv", sep = "_"))
+  )
+```
