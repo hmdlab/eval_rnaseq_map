@@ -222,7 +222,7 @@ result_quant_true_cpm <- result_quant_true_cpm %>%
 
 result_quant_true_tpm <- result_quant_true %>%
   h.quant$to_tpm(transcript_lengths) %>%
-  filter(feature_id %in% feature_ids_expressed) %>%
+  filter(feature_id %in% feature_ids_expressed)
 
 result_quant_true_tpm <- result_quant_true_tpm %>%
   mutate(mean = result_quant_true_tpm %>%
@@ -1748,7 +1748,7 @@ map2(
 utl$rm_private_vars()
 ```
 
-## 9. Additonal experiment (tailored)
+## 9. Additonal experiment: The impact of tailoring annotation
 
 ### 9.1 Preparations
 
@@ -1876,3 +1876,161 @@ metrics_de_tailored %>%
     here::here(output_dir, paste(PREFIX, "metrics_de_tailored", "data.tsv", sep = "_"))
   )
 ```
+
+## 10. Additonal experiment: FPs vs. mappability
+
+### 10.1 Preparetion
+```{r}
+tx_gene <- annotation_main %>%
+  distinct(gene_id, transcript_id) %>%
+  filter(!is.na(transcript_id))
+
+result_quant_gene_true_cpm <- result_quant_true_cpm %>%
+  left_join(
+    tx_gene,
+    by = c(feature_id = "transcript_id")
+  ) %>%
+  group_by(gene_id) %>%
+  summarize(ctrl = sum(ctrl), case = sum(case)) %>%
+  # mutate(mean = (ctrl + case) / 2) %>%
+  pivot_longer(-1, names_to = "sample", values_to = "cpm")
+
+
+threshold <- 0.25
+
+.feature_ids_fps_quant <- results_quant_est_cpm$data %>%
+  map(
+    .,
+    ~ pivot_longer(.x,-1, names_to = "sample",  values_to = "cpm") %>%
+      filter(cpm > threshold) %>%
+      unite(col = id, c(feature_id, sample), sep = "@") %>%
+      pull(id) %>%
+      setdiff(.,
+               result_quant_true_cpm %>%
+                 pivot_longer(-1, names_to = "sample", values_to = "cpm") %>%
+                 unite(col = id, c(feature_id, sample), sep = "@") %>%
+                 pull(id)
+      )
+  ) %>%
+  set_names(results_quant_est_cpm$combination)
+
+feature_ids_fps_quant <- .feature_ids_fps_quant %>% map(
+  ~ data.frame(id = .) %>%
+    separate(
+      col = id,
+      into = c("feature_id", "sample"),
+      sep = "@"
+    ) %>%
+    left_join(tx_gene,
+              by = c(feature_id = "transcript_id")) %>%
+    left_join(result_quant_gene_true_cpm, by = c("gene_id", "sample")) %>%
+    left_join(
+      mappabilities %>%
+        select(feature_type, data) %>%
+        deframe %>%
+        .$transcript %>%
+        select(feature_id, mappability),
+      by = "feature_id"
+    ) %>%
+    rename(mappability_tx = mappability) %>%
+    left_join(
+      mappabilities %>%
+        select(feature_type, data) %>%
+        deframe %>%
+        .$gene %>%
+        select(feature_id, mappability),
+      by = c(gene_id = "feature_id")
+    ) %>%
+    rename(mappability_gene = mappability) %>%
+  rename(cpm_gene = cpm)
+)
+
+utl$rm_private_vars()
+```
+
+### 10.2 Draw plots
+```{r}
+.data <- feature_ids_fps_quant
+
+.draw <- function(name, data, xlab, x) {
+  .theme <- theme(
+    text = element_text(size = 18),
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 18)
+  )
+  
+  .xlab <- xlab
+  
+  g <- data %>%
+    ggpubr::gghistogram(
+      x = x,
+      title = name,
+      add = "mean",
+      rug = FALSE,
+      color = "#222222",
+      fill = "#222222",
+      alpha = 0.125,
+      xlab = .xlab,
+      ylab = "Frequency"
+    )
+  g <- g + .theme
+}
+
+.data <- .data %>%
+  enframe(value = "data") %>%
+  mutate(plot_m_tx = map2(
+    name,
+    data,
+    ~ .draw(.x,
+            .y,
+            "Transcript mappability",
+            "mappability_tx")
+  )) %>%
+  mutate(plot_m_gene = map2(
+    name,
+    data,
+    ~ .draw(.x,
+            .y,
+            "Gene mappability",
+            "mappability_gene")
+  )) %>%
+  mutate(plot_cpm_gene = map2(
+    name,
+    data,
+    ~ .y %>%
+      mutate(cpm_gene = replace_na(cpm_gene, 0)) %>%
+      .draw(.x, ., "CPM (gene-level)", "cpm_gene")
+  ))
+
+.arrange <- function(list_plots) {
+  .plotlist <- map2(list_plots,
+                    paste0("(", LETTERS, ")")[1:length(list_plots)],
+                    ~ utl$add_lab(.x, .y))
+  
+  g <- ggpubr::ggarrange(plotlist = .plotlist,
+                         nrow = 2,
+                         ncol = 2)
+  
+  g
+}
+
+map2(
+  .data %>% select(starts_with("plot")) %>%
+    apply(2, .arrange),
+  .data %>% select(starts_with("plot")) %>% colnames,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "feature_ids_fps_hist_quant.pdf",
+    width = 3.2 * 3.2,
+    height = 3.2 * 3
+  )
+)
+
+utl$rm_private_vars()
+
+
+utl$rm_private_vars()
+```
+
+
