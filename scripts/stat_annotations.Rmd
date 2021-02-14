@@ -77,24 +77,23 @@ annotations <- paths_annotation %>%
   .exons_transcript <- annotation %>%
     filter(!is.na(transcript_id)) %>%
     group_by(transcript_id) %>%
-    summarize(value = n()) %>%
-    .$value %>% mean
+    summarize(value = n())
 
   .exons_gene <- annotation %>%
     filter(!is.na(transcript_id)) %>%
     mutate(region = end - start + 1) %>%
     select(gene_id, region) %>%
     group_by(gene_id) %>%
-    summarize(value = n()) %>%
-    .$value %>% mean
+    summarize(value = n())
 
   .uexons_gene <- annotation %>%
     filter(!is.na(transcript_id)) %>%
     mutate(region = end - start + 1) %>%
     distinct(gene_id, region) %>%
     group_by(gene_id) %>%
-    summarize(value = n()) %>%
-    .$value %>% mean
+    summarize(value = n())
+
+  .pct_uexons_gene <- .uexons_gene$value / .exons_gene$value * 100
 
   .row <-
     list(
@@ -102,9 +101,10 @@ annotations <- paths_annotation %>%
       n_transcript = .n_transcrips,
       n_gene = .n_genes,
       avg_transcripts_gene = .transcripts_gene,
-      avg_exons_transcript = .exons_transcript,
-      avg_exons_gene = .exons_gene,
-      avg_uexons_gene = .uexons_gene
+      avg_exons_transcript = mean(.exons_transcript$value),
+      avg_exons_gene = mean(.exons_gene$value),
+      avg_uexons_gene = mean(.uexons_gene$value),
+      avg_pct_uexons_gene = mean(.pct_uexons_gene)
     ) %>%
     enframe %>%
     unnest(value) %>%
@@ -141,10 +141,10 @@ annotations <- annotations %>%
   )
 
 # NOTE: PENDING
-annotations_lncrna <- annotations %>%
-  filter(grepl("lncrna", name) | grepl("noncode", name)) %>%
-  mutate(n_features = map(data,
-                          ~ .x %>% group_by(feature) %>% summarize(n = n())))
+# annotations_lncrna <- annotations %>%
+#   filter(grepl("lncrna", name) | grepl("noncode", name)) %>%
+#   mutate(n_features = map(data,
+#                           ~ .x %>% group_by(feature) %>% summarize(n = n())))
 
 annotations %>%
   select(name, n_features) %>%
