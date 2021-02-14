@@ -1,4 +1,4 @@
-# Project: The impact of uncertainty for mapping reads to human transcriptome on differential expression analysis 
+# Project: The impact of gene annotation on RNA-seq differential expression analysis in human study 
 
 ## Scripts used
 
@@ -6,7 +6,7 @@
 - https://github.com/hmdlab/rnaseqde2.git (for RNA-seq analysis workflow)
 
 
-## Containers used
+## Singularity containers used
 
 <div style="columns: 2;">
 
