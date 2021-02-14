@@ -1,10 +1,10 @@
 #! /usr/bin/env python3
-# $ -S $HOME/.pyenv/shims/python3
-# $ -l epyc
-# $ -l s_vmem=256G -l mem_req=256G
-# $ -cwd
-# $ -o ugelogs/
-# $ -e ugelogs/
+#$ -S $HOME/.pyenv/shims/python3
+#$ -l epyc
+#$ -l s_vmem=256G -l mem_req=256G
+#$ -cwd
+#$ -o ugelogs/
+#$ -e ugelogs/
 
 """
 Overlap kmers
@@ -32,22 +32,22 @@ from docopt import docopt
 
 
 def uniq(opt):
-    path_input = opt['<fasta>']
+    path_input = opt["<fasta>"]
 
     root, ext = os.path.splitext(path_input)
     path_output = "{}.uniqued.tsv".format(root)
 
-    if ext == '.gz':
+    if ext == ".gz":
         open_ = gzip.open
-        fmt = root.split('.')[-1]
+        fmt = root.split(".")[-1]
     else:
         open_ = open
         fmt = ext[1:]
 
-    if fmt == 'fa':
-        fmt = 'fasta'
+    if fmt == "fa":
+        fmt = "fasta"
 
-    f = open_(path_input, 'rt')
+    f = open_(path_input, "rt")
 
     kmers = {}
 
@@ -61,13 +61,13 @@ def uniq(opt):
 
     f.close()
 
-    with open(path_output, 'w') as f:
+    with open(path_output, "w") as f:
         for kv in kmers.items():
             print("\t".join(map(str, kv)), file=f)
 
 
 def agg(opt):
-    paths_input = opt['<work_tsv>']
+    paths_input = opt["<work_tsv>"]
     output_dir = os.path.dirname(paths_input[0])
     path_output = os.path.join(output_dir, "aggregated.tsv")
     n_sets = len(paths_input)
@@ -78,8 +78,7 @@ def agg(opt):
         for i, p in enumerate(paths):
             base_ = 2 ** i
 
-            reader = pd.read_csv(
-                p, delimiter='\t', chunksize=(10**6), header=None)
+            reader = pd.read_csv(p, delimiter="\t", chunksize=(10 ** 6), header=None)
 
             for c in reader:
                 for i in c[0].tolist():
@@ -94,8 +93,9 @@ def agg(opt):
     counts_kmer_merged = Counter(v for k, v in kmers_merged.items())
     bases = [2 ** i for i in range(n_sets)]
 
-    combinations_ = sum([list(combinations(bases, i))
-                         for i in range(1, n_sets + 1)], [])
+    combinations_ = sum(
+        [list(combinations(bases, i)) for i in range(1, n_sets + 1)], []
+    )
 
     def subtotal(counts, base):
         try:
@@ -109,7 +109,7 @@ def agg(opt):
         counts_hierarchical[sum(c)] = subtotal(counts_kmer_merged, sum(c))
 
     def key_converted(key, n):
-        converted = 'n'
+        converted = "n"
         for i in range(n):
             base_ = 2 ** i
 
@@ -118,21 +118,21 @@ def agg(opt):
 
         return converted
 
-    with open(path_output, 'w') as f:
+    with open(path_output, "w") as f:
         for k, v in counts_hierarchical.items():
             key_ = key_converted(k, n_sets)
-            print('\t'.join([key_, str(v)]), file=f)
+            print("\t".join([key_, str(v)]), file=f)
 
 
 def main():
     opt = docopt(__doc__)
 
-    if opt['uniq']:
+    if opt["uniq"]:
         uniq(opt)
 
-    if opt['agg']:
+    if opt["agg"]:
         agg(opt)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -12,11 +12,11 @@
 #$ -e ./ugelogs/
 
 inputs=(
-gencode.v31.transcripts.formatted.fastq \
-GCF_000001405.39_GRCh38.p13_transcripts.formatted.fastq \
-FANTOM_CAT.lv3_robust.fastq \
-mitranscriptome.v2.fastq \
-NONCODEv5_human.fastq
+    gencode.v31.transcripts.formatted.fastq \
+    GCF_000001405.39_GRCh38.p13_transcripts.formatted.fastq \
+    FANTOM_CAT.lv3_robust.fastq \
+    mitranscriptome.v2.fastq \
+    NONCODEv5_human.fastq
 )
 
 work_dir="results/kmers/100"

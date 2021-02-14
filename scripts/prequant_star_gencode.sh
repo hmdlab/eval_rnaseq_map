@@ -18,7 +18,7 @@ r2=${inputs[$((SGE_TASK_ID))]}
 output_dir="$(basename ${r1} .fastq.gz)"
 
 if [ ! -e ${output_dir} ]; then
-  mkdir -p ${output_dir}
+    mkdir -p ${output_dir}
 fi
 
 # GENCODE v31 Comprehensive
@@ -35,19 +35,19 @@ ram_GB=48          # ram memory avaliable for STAR sorting
 # --outReadsUnmapped Fastx: Collect unmapped reads
 # --readFilesCommand zcat: For gz compressed input
 cmd="STAR --genomeDir ${star_index} \
-    --runThreadN $ncpus --genomeLoad NoSharedMemory \
-    --outFilterMultimapNmax 20 --alignSJoverhangMin 8 --alignSJDBoverhangMin 1 \
-    --outFilterMismatchNmax 999 --outFilterMismatchNoverReadLmax 0.04 \
-    --alignIntronMin 20 --alignIntronMax 1000000 --alignMatesGapMax 1000000 \
-    --outSAMheaderCommentFile COfile.txt --outSAMheaderHD @HD VN:1.4 SO:coordinate \
-    --outSAMunmapped Within --outFilterType BySJout --outSAMattributes NH HI AS NM MD \
-    --outSAMtype BAM SortedByCoordinate --quantMode TranscriptomeSAM --sjdbScore 1 \
-    --limitBAMsortRAM ${ram_GB}000000000 \
-    --sjdbGTFfile ${annotation} \
-    --readNameSeparator \"|\" \
-    --outReadsUnmapped Fastx \
-    --readFilesCommand zcat \
-    --readFilesIn "
+--runThreadN $ncpus --genomeLoad NoSharedMemory \
+--outFilterMultimapNmax 20 --alignSJoverhangMin 8 --alignSJDBoverhangMin 1 \
+--outFilterMismatchNmax 999 --outFilterMismatchNoverReadLmax 0.04 \
+--alignIntronMin 20 --alignIntronMax 1000000 --alignMatesGapMax 1000000 \
+--outSAMheaderCommentFile COfile.txt --outSAMheaderHD @HD VN:1.4 SO:coordinate \
+--outSAMunmapped Within --outFilterType BySJout --outSAMattributes NH HI AS NM MD \
+--outSAMtype BAM SortedByCoordinate --quantMode TranscriptomeSAM --sjdbScore 1 \
+--limitBAMsortRAM ${ram_GB}000000000 \
+--sjdbGTFfile ${annotation} \
+--readNameSeparator \"|\" \
+--outReadsUnmapped Fastx \
+--readFilesCommand zcat \
+--readFilesIn "
 
 echo ${cmd} ${r1} ${r2} --outFileNamePrefix ${output_dir}/
 ${cmd} ${r1} ${r2} --outFileNamePrefix ${output_dir}/

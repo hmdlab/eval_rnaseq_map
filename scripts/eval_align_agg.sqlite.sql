@@ -4,15 +4,17 @@ PRAGMA cache_size=48000000;
 
 -- Aggregate
 drop table if exists transcript_metrics;
-create table if not exists transcript_metrics(qname, recall, precision, f1);
+create table
+if not exists transcript_metrics
+(qname, recall, precision, f1);
 
 insert into transcript_metrics
-  select
-    qname,
-    tp / (tp + fn) as recall,
-    tp / (tp + fp) as precision,
-    2 * tp / (2 * tp + fp + fn) as f1
-  from
+select
+  qname,
+  tp / (tp + fn) as recall,
+  tp / (tp + fp) as precision,
+  2 * tp / (2 * tp + fp + fn) as f1
+from
   (
   select
     qname,

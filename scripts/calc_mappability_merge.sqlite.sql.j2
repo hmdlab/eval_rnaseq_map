@@ -1,18 +1,30 @@
 -- Settings
-PRAGMA busy_timeout=864000000;
-PRAGMA cache_size=48000000;
-
-attach database '{{ src_database }}' as ext;
-
+PRAGMA busy_timeout = 864000000;
+PRAGMA cache_size = 48000000;
+attach database '{{ src_database }}' AS ext;
 -- Merge
-create table if not exists transcript_alignment_truths (id, qname, true, false);
-insert into transcript_alignment_truths
-select 
-  * from ext.transcript_alignment_truths;
-
-create table if not exists gene_alignment_truths (id, qname, true, false);
-insert into gene_alignment_truths
-select 
-  * from ext.gene_alignment_truths;
-
+CREATE TABLE if NOT EXISTS transcript_alignment_truths (
+  id,
+  qname,
+  TRUE,
+  FALSE
+);
+INSERT INTO
+  transcript_alignment_truths
+SELECT
+  *
+FROM
+  ext.transcript_alignment_truths;
+CREATE TABLE if NOT EXISTS gene_alignment_truths (
+    id,
+    qname,
+    TRUE,
+    FALSE
+  );
+INSERT INTO
+  gene_alignment_truths
+SELECT
+  *
+FROM
+  ext.gene_alignment_truths;
 vacuum;

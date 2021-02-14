@@ -81,7 +81,7 @@ annotations <- annotations %>%
   ) %>%
   mutate(n_genes_biotype = map(data,
                           ~ .x %>% filter(feature == "gene") %>% group_by(gene_type) %>% summarize(n = n()))
-  ) %>% 
+  ) %>%
   mutate(n_transcripts_biotype = map(data,
                           ~ .x %>% filter(feature == "transcript") %>% group_by(transcript_type) %>% summarize(n = n()))
   )

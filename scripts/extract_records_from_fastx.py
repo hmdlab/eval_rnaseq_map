@@ -22,38 +22,38 @@ def main():
     path_list_target = sys.argv[1]
     path_fastq = sys.argv[2]
 
-    f = open(path_list_target, 'r')
+    f = open(path_list_target, "r")
     target_ids = set([(l.strip()) for l in f])
     f.close()
 
     def match(id, db=target_ids):
-        id_ = id.split('|')[0]
+        id_ = id.split("|")[0]
         if id_ in db:
             return True
 
         return False
 
-    def puts(r, type='fastq'):
-        if type in ['fa', 'fasta']:
+    def puts(r, type="fastq"):
+        if type in ["fa", "fasta"]:
             print(f">{r.description}\n{r.seq}")
             return
 
-        q = ''.join(['I'] * len(r.seq))
+        q = "".join(["I"] * len(r.seq))
         print(f"@{r.description}\n{r.seq}\n+\n{q}")
         return
 
     def extract(path):
         root, ext_ = os.path.splitext(path)
-        if ext_ == '.gz':
+        if ext_ == ".gz":
             open_ = gzip.open
-            ext = root.split('.')[-1]
+            ext = root.split(".")[-1]
         else:
             open_ = open
             ext = ext_[1:]
-            if ext == 'fa':
-                ext = 'fasta'
+            if ext == "fa":
+                ext = "fasta"
 
-        handle = open_(path, 'rt')
+        handle = open_(path, "rt")
 
         for r in SeqIO.parse(handle, ext):
             if match(r.id):
@@ -64,5 +64,5 @@ def main():
     extract(path_fastq)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

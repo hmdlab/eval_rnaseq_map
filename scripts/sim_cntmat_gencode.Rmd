@@ -328,7 +328,7 @@ transcript_lengths <- path_annotation %>%
 mean_cpm_sim_agg <- mean_cpm_sim %>%
   group_by(feature_id) %>%
   summarize(log10cpm_mean = log10(mean(cpm)))
-  
+
 mean_tpm_sim_agg <- mean_cpm_sim %>%
   group_by(feature_id) %>%
   summarize(cpm_mean = mean(cpm)) %>%

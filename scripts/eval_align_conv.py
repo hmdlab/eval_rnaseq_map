@@ -37,7 +37,7 @@ def to_ranges(positions: Iterable[int]):
     try:
         if len(positions) != len(set(positions)):
             sys.stderr.write(str(positions))
-            raise Exception('Duplicated position!')
+            raise Exception("Duplicated position!")
     except Exception as e:
         sys.stderr.write(e)
         sys.exit(1)
@@ -53,31 +53,32 @@ def to_ranges(positions: Iterable[int]):
 
 def strand_str(alignment, strandedness):
     # TODO: Stranded sequence
-    if strandedness == 'rf':
+    if strandedness == "rf":
         if alignment.is_read1:
-            return '+' if alignment.is_reverse else '-'
+            return "+" if alignment.is_reverse else "-"
         else:
-            return '-' if alignment.is_reverse else '+'
-    elif strandedness == 'fr':
+            return "-" if alignment.is_reverse else "+"
+    elif strandedness == "fr":
         if alignment.is_read1:
-            return '-' if alignment.is_reverse else '+'
+            return "-" if alignment.is_reverse else "+"
         else:
-            return '+' if alignment.is_reverse else '-'
+            return "+" if alignment.is_reverse else "-"
     else:
-        return ('+', '-')
+        return ("+", "-")
 
 
-def pickle_annotations(gtf_path, columns: list, features=['exon']):
-    annotations = read_gtf(
-        gtf_path,
-        features=features).filter(
-            columns).sort_values(by=['seqname', 'transcript_id', 'exon_number'])
+def pickle_annotations(gtf_path, columns: list, features=["exon"]):
+    annotations = (
+        read_gtf(gtf_path, features=features)
+        .filter(columns)
+        .sort_values(by=["seqname", "transcript_id", "exon_number"])
+    )
 
     annotations.to_pickle("annotations.pkl")
     sys.exit()
 
 
-def load_annotations(gtf_path, columns: list, features=['exon']):
+def load_annotations(gtf_path, columns: list, features=["exon"]):
     if not __debug__:
         # load from pickled object
         annotations = pd.read_pickle(gtf_path)
@@ -85,9 +86,12 @@ def load_annotations(gtf_path, columns: list, features=['exon']):
 
     # NOTE: GENCODE data format;
     # https://www.gencodegenes.org/pages/data_format.html
-    annotations = read_gtf(gtf_path
-                           ).query("feature == {}".format(features)).filter(
-        columns).sort_values(by=['seqname', 'transcript_id', 'exon_number'])
+    annotations = (
+        read_gtf(gtf_path)
+        .query("feature == {}".format(features))
+        .filter(columns)
+        .sort_values(by=["seqname", "transcript_id", "exon_number"])
+    )
 
     return annotations
 
@@ -97,14 +101,14 @@ def load_alignments(bam_path, threads=1):
     # https://pysam.readthedocs.io/en/latest/api.html#pysam.AlignedSegment
 
     try:
-        alignments = pysam.AlignmentFile(bam_path, mode='rb', threads=threads)
+        alignments = pysam.AlignmentFile(bam_path, mode="rb", threads=threads)
         alignments.check_index()
     except (ValueError, AttributeError) as e:
         sys.stderr.write("Index is not found: {}\n".format(e))
-        sys.stderr.write('Create index...')
+        sys.stderr.write("Create index...")
         pysam.index(bam_path)
         try:
-            alignments = pysam.AlignmentFile(bam_path, mode='rb', threads=threads)
+            alignments = pysam.AlignmentFile(bam_path, mode="rb", threads=threads)
             alignments.check_index()
         except Exception as e:
             sys.stderr.write("Alignments file open was failed: {}\n".format(e))
@@ -117,9 +121,9 @@ def offsets(annotations):
     offsets = [None] * len(annotations)
     transcript_id_previous = end_previous = offset = None
 
-    transcript_ids = list(annotations['transcript_id'])
-    starts = list(annotations['start'])
-    ends = list(annotations['end'])
+    transcript_ids = list(annotations["transcript_id"])
+    starts = list(annotations["start"])
+    ends = list(annotations["end"])
 
     for i, (t, s, e) in enumerate(zip(transcript_ids, starts, ends)):
         if transcript_id_previous != t:
@@ -135,23 +139,32 @@ def offsets(annotations):
 
 
 def create_db_engine(
-        annotations,
-        chromosomes,
-        table='exons',
-        columns_index=['strand', 'transcript_id', 'start', 'end', ('strand', 'transcript_id'),  ('strand', 'start'), ('strand', 'end'), ('strand', 'start', 'end')]):
-    db_engine = create_engine('sqlite://', echo=False)
+    annotations,
+    chromosomes,
+    table="exons",
+    columns_index=[
+        "strand",
+        "transcript_id",
+        "start",
+        "end",
+        ("strand", "transcript_id"),
+        ("strand", "start"),
+        ("strand", "end"),
+        ("strand", "start", "end"),
+    ],
+):
+    db_engine = create_engine("sqlite://", echo=False)
     db_engine.row_factory = Row
-    annotations.query(
-        "seqname == {}".format(chromosomes)
-    ).to_sql(table, con=db_engine, if_exists='replace')
+    annotations.query("seqname == {}".format(chromosomes)).to_sql(
+        table, con=db_engine, if_exists="replace"
+    )
 
     for c in columns_index:
         if type(c) is str:
-            c = (c, )
+            c = (c,)
         query = "CREATE INDEX ix_{0}_{1} on {0}({2})".format(
-            table,
-            '_'.join(c),
-            ', '.join(c))
+            table, "_".join(c), ", ".join(c)
+        )
         db_engine.execute(query)
 
     return db_engine
@@ -159,29 +172,26 @@ def create_db_engine(
 
 @lru_cache(maxsize=None)
 def build_query(strand, transcript_id, table, columns):
-    columns_str = ', '.join(columns)
+    columns_str = ", ".join(columns)
 
-    if strand == ('+', '-'):
+    if strand == ("+", "-"):
         where_clause = "transcript_id == '{}'".format(transcript_id)
     else:
-        where_clause = "strand = '{}' AND transcript_id == '{}'".format(strand, transcript_id)
+        where_clause = "strand = '{}' AND transcript_id == '{}'".format(
+            strand, transcript_id
+        )
 
-    query = "SELECT {} FROM {} WHERE {}".format(
-                columns_str,
-                table,
-                where_clause)
+    query = "SELECT {} FROM {} WHERE {}".format(columns_str, table, where_clause)
 
     return query
 
 
 def query_exons(
-        strand,
-        transcript_id,
-        annotations,
-        table='exons',
-        columns=['start', 'end']):
-    results = annotations.execute(build_query(
-        strand, transcript_id, table, tuple(columns))).fetchall()
+    strand, transcript_id, annotations, table="exons", columns=["start", "end"]
+):
+    results = annotations.execute(
+        build_query(strand, transcript_id, table, tuple(columns))
+    ).fetchall()
     return results
 
 
@@ -192,7 +202,7 @@ def transcript_id_derived_from(query_name):
     # e.g. read1/ENST00000501122.2
 
     try:
-        transcript_id = query_name.split('/')[1].split(';')[0]
+        transcript_id = query_name.split("/")[1].split(";")[0]
         return transcript_id
     except Exception:
         sys.stderr.write("Query name ({}) is invalid.\n".format(query_name))
@@ -228,10 +238,10 @@ def counted_up_dict(dict_):
 
 def main():
     options = docopt(__doc__)
-    strandedness = options['--strandedness']
-    threads = int(options['--threads'])
-    gtf_path = options['<gtf>']
-    bam_path = options['<bam>']
+    strandedness = options["--strandedness"]
+    threads = int(options["--threads"])
+    gtf_path = options["<gtf>"]
+    bam_path = options["<bam>"]
 
     for path in [gtf_path, bam_path]:
         try:
@@ -241,12 +251,18 @@ def main():
             sys.stderr.write(e.args)
             sys.exit(1)
 
-    columns_select = ['seqname', 'strand', 'start', 'end',
-                      'transcript_id', 'exon_number']
+    columns_select = [
+        "seqname",
+        "strand",
+        "start",
+        "end",
+        "transcript_id",
+        "exon_number",
+    ]
     annotations = load_annotations(gtf_path, columns_select)
 
-    annotations['offset'] = offsets(annotations)
-    columns_select.append('offset')
+    annotations["offset"] = offsets(annotations)
+    columns_select.append("offset")
 
     alignments = load_alignments(bam_path, threads)
 
@@ -291,7 +307,7 @@ def main():
     alignments.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     start = time.time()
     main()
     sys.stderr.write("main: {}".format(time.time() - start))

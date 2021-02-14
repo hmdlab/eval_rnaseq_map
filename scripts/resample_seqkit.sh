@@ -22,11 +22,11 @@ output_file=$(basename $input)
 
 for n in ${num_reads[@]}
 do
-  if [ ! -e ${n} ]; then
-    mkdir -p ${n}
-  fi
-
-  cmd="zcat ${input} | seqkit sample -n ${n} -s ${seed} -o ./${n}/${output_file}"
-  echo $cmd
-  eval $cmd
+    if [ ! -e ${n} ]; then
+        mkdir -p ${n}
+    fi
+    
+    cmd="zcat ${input} | seqkit sample -n ${n} -s ${seed} -o ./${n}/${output_file}"
+    echo $cmd
+    eval $cmd
 done

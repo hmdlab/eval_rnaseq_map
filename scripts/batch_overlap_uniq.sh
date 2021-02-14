@@ -15,21 +15,21 @@
 
 
 unique () {
-  cmd="python scripts/overlap_kmers.py uniq \
+    cmd="python scripts/overlap_kmers.py uniq \
     $1"
-  echo $cmd
-  eval $cmd
+    echo $cmd
+    eval $cmd
 }
 
 kmer_dir="results/kmers/100"
 output_dir="results/mappabilities/100"
 
 file_roots=(
-FANTOM_CAT.lv3_robust
-GCF_000001405.39_GRCh38.p13_transcripts.formatted
-gencode.v31.transcripts.formatted
-mitranscriptome.v2
-NONCODEv5_human
+    FANTOM_CAT.lv3_robust
+    GCF_000001405.39_GRCh38.p13_transcripts.formatted
+    gencode.v31.transcripts.formatted
+    mitranscriptome.v2
+    NONCODEv5_human
 )
 
 kmer="${kmer_dir}/${file_roots[$((SGE_TASK_ID-1))]}.fastq.gz"

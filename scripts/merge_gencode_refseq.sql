@@ -11,7 +11,7 @@ attach database 'shared/assets/references/grch38/annotations/gencode/gencode.v31
 attach database 'shared/assets/references/grch38/annotations/gencode_refseq/cuffcmp.combined.sqlite' as cuffcmp;
 
 -- create conv table (tx-level and gene-level)
-create table conv as 
+create table conv as
 select cuffcmp.oId, refseq.gene_id as oGId, cuffcmp.nearest_ref, gencode.gene_id as nearest_gid
   from (select distinct oId, nearest_ref from cuffcmp.annotations where oId <> '' and nearest_ref <> '') cuffcmp
     inner join (select gene_id, transcript_id from refseq.annotations) refseq
@@ -19,10 +19,10 @@ select cuffcmp.oId, refseq.gene_id as oGId, cuffcmp.nearest_ref, gencode.gene_id
       inner join (select distinct gene_id, transcript_id from gencode.annotations where feature = 'exon') gencode
       on cuffcmp.nearest_ref = gencode.transcript_id;
 
-create table annotations as 
+create table annotations as
 -- refseq only
 -- 107001
-select seqname, source, feature, `start`, `end`, score, strand, frame, ifnull(conv.nearest_gid, gene_id) as gene_id, gene_type, gene_name, transcript_id, transcript_type, transcript_name, exon_number, '' as oId, ifnull(conv.oGId, '') as oGid, '' as nearest_ref, '' as class_code 
+select seqname, source, feature, `start`, `end`, score, strand, frame, ifnull(conv.nearest_gid, gene_id) as gene_id, gene_type, gene_name, transcript_id, transcript_type, transcript_name, exon_number, '' as oId, ifnull(conv.oGId, '') as oGid, '' as nearest_ref, '' as class_code
   from
   (select seqname, source, feature, `start`, `end`, score, strand, frame, gene_id, gbkey as gene_type, gene_name, transcript_id, class as transcript_type, transcript_name, exon_number from refseq.annotations
   -- select count(distinct transcript_id) from refseq.annotations
@@ -57,7 +57,7 @@ update annotations set
 
 update annotations set
   frame = '0'
-  where frame is not null; 
+  where frame is not null;
 
 -- merge at gene-level
 
@@ -82,7 +82,7 @@ select src, sum(cnt) as cnt from
 
 -- intersect
 select count(distinct oId), count(distinct nearest_ref) from conv where class_code = '=';
-select count(distinct oGId), count(distinct nearest_gid) from conv where class_code = '='   
+select count(distinct oGId), count(distinct nearest_gid) from conv where class_code = '='
 
 -- 1:n converted genes
 select oGId, count(distinct nearest_gid), group_concat(distinct nearest_gid), group_concat(distinct oId) from conv
@@ -96,7 +96,7 @@ select nearest_gid, count(distinct oGId), group_concat(distinct oGId), group_con
   group by nearest_gid
   having count(distinct oGId) > 1;
 
-select count(case when prefix = 'ENSG' then 1 else 0 end) as ensembl_gene, count(case when prefix <> 'ENSG' then 1 else 0 end) as refseq_gene from 
+select count(case when prefix = 'ENSG' then 1 else 0 end) as ensembl_gene, count(case when prefix <> 'ENSG' then 1 else 0 end) as refseq_gene from
   (select substr(gene_id, 1, 4) as prefix, count(distinct gene_id) from annotations
     group by substr(gene_id, 1, 4)) t1
 
@@ -111,19 +111,19 @@ select * from annotations
   and transcript_id like 'NM%'
   and gene_id like 'ENSG%'
   order by seqname, gene_id, transcript_id, cast(exon_number as int)
-  
-select * from 
+
+select * from
   (select distinct gene_id, transcript_id from annotations) an
   left join conv
     on an.transcript_id = conv.oId;
 
 -- NOTE: Required SQLite 3.25 above
-create table transcripts_ordered as 
+create table transcripts_ordered as
 select row_number() over(order by seqname, start_min, transcript_id) as `index`, transcript_id, seqname, start_min from
 (select seqname, transcript_id, min(start) as start_min from annotations
   group by seqname, transcript_id) t1;
 
-create table annotations_ordered as 
+create table annotations_ordered as
 select row_number() over(order by t2.`index`, t1.exon_number) as `index`, t1.* from annotations t1
   left join transcripts_ordered t2
     using(transcript_id)

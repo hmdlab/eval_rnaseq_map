@@ -235,6 +235,49 @@ plot_box <-
   }
 
 
+plot_bar_ <- function(data_,
+                      x = "bin",
+                      y = "value",
+                      facet.by,
+                      group = NULL,
+                      xlab = NULL,
+                      ylab = NULL,
+                      ylim = NULL,
+                      breaks = NULL,
+                      labels = NULL,
+                      tilt = FALSE) {
+  theme_ <- theme(
+    text = element_text(size = 18),
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 14)
+  )
+
+  if (tilt)
+    theme_ <-
+      theme_ + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+  g <- data_ %>%
+    ggbarplot(
+      x,
+      y,
+      group = group,
+      color = "darkgrey",
+      fill = "darkgrey",
+      label = FALSE,
+      position = position_dodge(0.9),
+      lab.size = 7,
+      xlab = xlab,
+      ylab = ylab
+    )
+  g <- g + scale_x_discrete(breaks = breaks, labels = labels)
+  g <- g + theme_ + theme(legend.position = "none")
+  g <- facet(g + theme_bw() + theme_, facet.by = facet.by)
+
+  g
+}
+
+
 plot_bar <- function(data_,
                      group_ = NULL,
                      tilt = FALSE,
@@ -285,49 +328,6 @@ plot_bar <- function(data_,
   g <- g + .theme
 
   if (length(facet.by)) g <- ggpubr::facet(g + theme_bw() + .theme, facet.by = facet.by)
-
-  g
-}
-
-
-plot_bar_ <- function(data_,
-                      x = "bin",
-                      y = "value",
-                      facet.by,
-                      group = NULL,
-                      xlab = NULL,
-                      ylab = NULL,
-                      ylim = NULL,
-                      breaks = NULL,
-                      labels = NULL,
-                      tilt = FALSE) {
-  theme_ <- theme(
-    text = element_text(size = 18),
-    legend.position = "bottom",
-    legend.title = element_blank(),
-    legend.text = element_text(size = 14)
-  )
-
-  if (tilt)
-    theme_ <-
-      theme_ + theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
-  g <- data_ %>%
-    ggbarplot(
-      x,
-      y,
-      group = group,
-      color = "darkgrey",
-      fill = "darkgrey",
-      label = FALSE,
-      position = position_dodge(0.9),
-      lab.size = 7,
-      xlab = xlab,
-      ylab = ylab
-    )
-  g <- g + scale_x_discrete(breaks = breaks, labels = labels)
-  g <- g + theme_ + theme(legend.position = "none")
-  g <- facet(g + theme_bw() + theme_, facet.by = facet.by)
 
   g
 }

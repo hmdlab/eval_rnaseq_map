@@ -34,15 +34,15 @@ from docopt import docopt
 
 
 def split(opt):
-    path_bam = opt['<bam>']
-    output_dir = opt['--output-dir']
-    line_size = opt['--line-size']
+    path_bam = opt["<bam>"]
+    output_dir = opt["--output-dir"]
+    line_size = opt["--line-size"]
 
     root, _ = os.path.splitext(os.path.basename(path_bam))
     output_subdir = os.path.join(output_dir, f"{root}")
 
     if os.path.exists(output_subdir):
-        sys.stderr.write('File already exists.')
+        sys.stderr.write("File already exists.")
         return 1
 
     os.makedirs(output_subdir)
@@ -57,23 +57,22 @@ def split(opt):
 
 
 def calc(opt):
-    template_dir = opt['--template-dir'] if opt['--template-dir'] else os.path.dirname(__file__)
-    output_dir = opt['--output-dir']
+    template_dir = (
+        opt["--template-dir"] if opt["--template-dir"] else os.path.dirname(__file__)
+    )
+    output_dir = opt["--output-dir"]
 
-    path_annotation = opt['<annotation_sqlite>']
-    path_tsv = opt['<aligned_tsv>']
+    path_annotation = opt["<annotation_sqlite>"]
+    path_tsv = opt["<aligned_tsv>"]
 
     root, _ = os.path.splitext(os.path.basename(path_tsv))
     path_output = os.path.join(output_dir, f"{root}.sqlite")
     path_sql = os.path.join(output_dir, f".{root}.sql")
 
     env = Environment(loader=FileSystemLoader(template_dir))
-    template = env.get_template('calc_mappability_calc.sqlite.sql.j2')
+    template = env.get_template("calc_mappability_calc.sqlite.sql.j2")
 
-    rendered = template.render(
-        tsv_aligned=path_tsv,
-        annotation=path_annotation
-        )
+    rendered = template.render(tsv_aligned=path_tsv, annotation=path_annotation)
 
     with open(path_sql, "w") as f:
         f.write(rendered)
@@ -90,26 +89,26 @@ def calc(opt):
 
 
 def agg(opt):
-    template_dir = opt['--template-dir'] if opt['--template-dir'] else os.path.dirname(__file__)
-    output_dir = opt['--output-dir']
+    template_dir = (
+        opt["--template-dir"] if opt["--template-dir"] else os.path.dirname(__file__)
+    )
+    output_dir = opt["--output-dir"]
 
-    paths_sqlite = opt['<result_sqlite>']
-    path_annotation = opt['<annotation_sqlite>']
-    path_fastq = opt['<unaligned_fastq>']
+    paths_sqlite = opt["<result_sqlite>"]
+    path_annotation = opt["<annotation_sqlite>"]
+    path_fastq = opt["<unaligned_fastq>"]
 
     root = os.path.basename(os.path.dirname(paths_sqlite[0]))
     path_output = os.path.join(output_dir, f"{root}.aligned.merged.sqlite")
 
     env = Environment(loader=FileSystemLoader(template_dir))
-    template = env.get_template('calc_mappability_merge.sqlite.sql.j2')
+    template = env.get_template("calc_mappability_merge.sqlite.sql.j2")
 
     if os.path.exists(path_output):
         os.remove(path_output)
 
     for p in paths_sqlite:
-        rendered = template.render(
-            src_database=p
-            )
+        rendered = template.render(src_database=p)
 
         root, _ = os.path.splitext(os.path.basename(p))
         path_sql = os.path.join(output_dir, f".{root}.sql")
@@ -135,12 +134,11 @@ def agg(opt):
     _ = subprocess.run(cmd, shell=True, capture_output=False)
 
     env = Environment(loader=FileSystemLoader(template_dir))
-    template = env.get_template('calc_mappability_agg.sqlite.sql.j2')
+    template = env.get_template("calc_mappability_agg.sqlite.sql.j2")
 
     rendered = template.render(
-        annotation=path_annotation,
-        tsv_unaligned=path_tsv_unaligned
-        )
+        annotation=path_annotation, tsv_unaligned=path_tsv_unaligned
+    )
 
     with open(path_sql, "w") as f:
         f.write(rendered)
@@ -158,15 +156,15 @@ def agg(opt):
 def main():
     opt = docopt(__doc__)
 
-    if opt['split']:
+    if opt["split"]:
         split(opt)
 
-    if opt['calc']:
+    if opt["calc"]:
         calc(opt)
 
-    if opt['agg']:
+    if opt["agg"]:
         agg(opt)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

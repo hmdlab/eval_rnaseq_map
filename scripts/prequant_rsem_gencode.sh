@@ -17,7 +17,7 @@ input=${inputs[$((SGE_TASK_ID-1))]}
 output_dir="$(basename $(dirname ${input}))_rsem"
 
 if [ ! -e ${output_dir} ]; then
-  mkdir -p ${output_dir}
+    mkdir -p ${output_dir}
 fi
 
 # IMPORTANT: FASTQ files must sorted by name
@@ -40,11 +40,11 @@ extra_flags="--paired-end"
 extra_flags="${extra_flags} ${strand}"
 
 cmd="rsem-calculate-expression \
-    --bam --estimate-rspd --calc-ci --seed ${rnd_seed} -p $ncpus \
-    --no-bam-output --ci-memory 30000 ${extra_flags} \
-    ${input} \
-    ${index_prefix} \
-    ${output_dir}/rsem"
+--bam --estimate-rspd --calc-ci --seed ${rnd_seed} -p $ncpus \
+--no-bam-output --ci-memory 30000 ${extra_flags} \
+${input} \
+${index_prefix} \
+${output_dir}/rsem"
 
 echo ${cmd}
 ${cmd}
