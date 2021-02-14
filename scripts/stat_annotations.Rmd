@@ -1,0 +1,200 @@
+---
+title: "Stats annotations"
+date: "`r format(Sys.time(), '%Y/%m/%d')`"
+output: html_notebook
+params: NULL
+editor_options:
+  chunk_output_type: console
+---
+
+## 1. Preparations
+```{r}
+library(tidyverse)
+
+utl <- new.env(); source(here::here("scripts/utils/base.R"), utl); source(here::here("scripts/utils/plot.R"), utl)
+
+OUTPUT_DIR <- here::here("results/figs_tbls")
+```
+
+## 2. Load annotations
+```{r}
+paths_annotation <- here::here(
+  "shared/assets/references",
+  c(
+    "grch37/annotations/fantomcat/FANTOM_CAT.lv3_robust.unnormalized.gtf",
+    "grch37/annotations/fantomcat/FANTOM_CAT.lv3_robust.all_lncRNA.unnormalized.gtf",
+    "grch37/annotations/mitranscriptome/mitranscriptome.v2.gtf",
+    "grch38/annotations/gencode/gencode.v31.annotation.gtf",
+    "grch38/annotations/gencode/gencode.v31.long_noncoding_RNAs.gtf",
+    "grch38/annotations/gencode/gencode.v31.pc.gtf",
+    "grch38/annotations/gencode/gencode.v31.basic.annotation.gtf",
+    "grch38/annotations/noncode/NONCODEv5_hg38.lncAndGene.gtf",
+    "grch38/annotations/refseq/GCF_000001405.39_GRCh38.p13_genomic.formatted_curated.gtf",
+    "grch38/annotations/refseq/GCF_000001405.39_GRCh38.p13_genomic.formatted.gtf"
+  )
+) %>% set_names(
+  c(
+    "fantom-cat",
+    "fantom-cat-lncrna",
+    "mitranscriptome",
+    "gencode",
+    "gencode-lncrna",
+    "gencode-pc",
+    "gencode-basic",
+    "noncode",
+    "refseq-curated",
+    "refseq"
+    )
+  )
+
+annotations <- paths_annotation %>%
+  map(~ utl$load_gtf_(.x, types = c("exon"))) %>%
+  enframe(value = "data")
+```
+
+## 3. Overview
+### 3.1 Summarize
+```{r}
+.calc_row <- function(annotation, label_) {
+  # NOTE: For all biotypes
+  .n_exons <- annotation %>% nrow
+
+  .n_transcrips <- annotation %>%
+    filter(!is.na(transcript_id)) %>%
+    distinct(transcript_id) %>% nrow
+
+  .n_genes <- annotation %>%
+    filter(!is.na(gene_id)) %>%
+    distinct(gene_id) %>% nrow
+
+  .transcripts_gene <- annotation %>%
+    filter(!is.na(transcript_id)) %>%
+    distinct(gene_id, transcript_id) %>%
+    group_by(gene_id) %>%
+    summarize(value = n()) %>%
+    .$value %>% mean
+
+  .exons_transcript <- annotation %>%
+    filter(!is.na(transcript_id)) %>%
+    group_by(transcript_id) %>%
+    summarize(value = n())
+
+  .exons_gene <- annotation %>%
+    filter(!is.na(transcript_id)) %>%
+    mutate(region = end - start + 1) %>%
+    select(gene_id, region) %>%
+    group_by(gene_id) %>%
+    summarize(value = n())
+
+  .uexons_gene <- annotation %>%
+    filter(!is.na(transcript_id)) %>%
+    mutate(region = end - start + 1) %>%
+    distinct(gene_id, region) %>%
+    group_by(gene_id) %>%
+    summarize(value = n())
+
+  .pct_uexons_gene <- .uexons_gene$value / .exons_gene$value * 100
+
+  .row <-
+    list(
+      n_exon = .n_exons,
+      n_transcript = .n_transcrips,
+      n_gene = .n_genes,
+      avg_transcripts_gene = .transcripts_gene,
+      avg_exons_transcript = mean(.exons_transcript$value),
+      avg_exons_gene = mean(.exons_gene$value),
+      avg_uexons_gene = mean(.uexons_gene$value),
+      avg_pct_uexons_gene = mean(.pct_uexons_gene)
+    ) %>%
+    enframe %>%
+    unnest(value) %>%
+    rename(feature = name) %>%
+    rename(n = value) %>%
+    mutate(biotype = label_)
+}
+
+.n_features <- function(annotation) {
+  bind_rows(
+    annotation %>%
+      .calc_row("all"),
+    annotation %>%
+      filter(transcript_type %in% c("mRNA", "protein_coding")) %>%
+      .calc_row("protein_coding"),
+    annotation %>%
+      filter(transcript_type %in% c("lncRNA", "lncrna")) %>%
+      .calc_row("lncrna"),
+  )
+}
+
+annotations <- annotations %>%
+  mutate(n_features = map(data,
+                          ~ .n_features(.x))) %>%
+  mutate(exons_transcript = map(
+    data,
+    ~ .x %>% select(transcript_id, 1) %>% group_by(transcript_id) %>% dplyr::summarize(n = n())
+  )) %>%
+  mutate(
+    transcripts_gene = map(
+      data,
+      ~ .x %>% filter(!is.na(transcript_id)) %>% distinct(gene_id, transcript_id) %>% group_by(gene_id) %>% dplyr::summarize(n = n())
+    )
+  )
+
+# NOTE: PENDING
+# annotations_lncrna <- annotations %>%
+#   filter(grepl("lncrna", name) | grepl("noncode", name)) %>%
+#   mutate(n_features = map(data,
+#                           ~ .x %>% group_by(feature) %>% summarize(n = n())))
+
+annotations %>%
+  select(name, n_features) %>%
+  unnest(2) %>%
+  pivot_wider(names_from = c(name, biotype), values_from = n) %>%
+  write_tsv(file.path(OUTPUT_DIR, "n_features_matrix_data.tsv"))
+
+```
+
+### 3.2 Draw plots
+```{r fig.height=3.2, fig.width=6.4}
+.theme <- theme(
+  text = element_text(size = 18),
+  legend.position = "bottom",
+  legend.title = element_blank(),
+  legend.text = element_text(size = 18)
+)
+
+g1 <- annotations %>%
+  select(name, n_features) %>%
+  unnest(2) %>%
+  ggpubr::ggbarplot(
+    x = "name", y = "n", fill = "feature",
+    palette = viridis::viridis(3),
+    position = position_dodge(0.9),
+    facet.by = "feature",
+    rotate = TRUE
+    ) + .theme
+
+g2 <- annotations %>%
+  select(name, transcripts_gene) %>%
+  unnest(2) %>%
+  mutate(n_log10 = log10(n)) %>%
+  ggpubr::ggviolin(
+    x = "name", y = "n_log10", fill = "name",
+    palette = viridis::viridis(nrow(annotations)),
+    draw_quantiles = 0.5,
+    rotate = TRUE
+    ) + .theme
+
+g3 <- annotations %>%
+  select(name, exons_transcript) %>%
+  unnest(2) %>%
+  mutate(n_log10 = log10(n)) %>%
+  ggpubr::ggviolin(
+    x = "name", y = "n_log10", fill = "name",
+    palette = viridis::viridis(nrow(annotations)),
+    draw_quantiles = 0.5,
+    rotate = TRUE
+    ) + .theme
+
+list(g1, g2, g3)
+```

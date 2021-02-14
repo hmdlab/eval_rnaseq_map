@@ -1,0 +1,519 @@
+---
+title: "Stats mappability"
+date: "`r format(Sys.time(), '%Y/%m/%d')`"
+output: html_notebook
+params: NULL
+editor_options:
+  chunk_output_type: console
+---
+
+## 1. Preparations
+```{r, setup, cache=FALSE}
+library(tidyverse)
+
+utl <- new.env(); source(here::here("scripts/utils/base.R"), utl); source(here::here("scripts/utils/plot.R"), utl)
+
+OUTPUT_DIR <- here::here("results/figs_tbls")
+```
+
+## 2. Load GTF
+```{r}
+# NOTE: This Order is important
+paths_annotation <- here::here(
+  "shared/assets/references",
+  c(
+    "grch38/annotations/gencode/gencode.v31.annotation.gtf",
+    "grch38/annotations/gencode/gencode.v31.long_noncoding_RNAs.gtf",
+    "grch38/annotations/gencode/gencode.v31.pc.gtf",
+    "grch38/annotations/refseq/GCF_000001405.39_GRCh38.p13_genomic.formatted.gtf",
+    "grch38/annotations/noncode/NONCODEv5_hg38.lncAndGene_formatted.gtf",
+    # "grch37/annotations/fantomcat/FANTOM_CAT.lv3_robust.unnormalized.gtf",
+    "grch37/annotations/mitranscriptome/mitranscriptome.v2.gtf"
+  )
+) %>% set_names(
+  c(
+    "GENCODE",
+    "GENCODE-lncRNA",
+    "GENCODE-ProteinCoding",
+    "RefSeq",
+    "NONCODE",
+    # "FANTOM-CAT",
+    "MiTranscriptome"
+  )
+)
+
+annotations <- paths_annotation %>%
+  map(~ utl$load_gtf_(.x, types = c("exon")))
+
+
+# NOTE: Replace feature_type due to a mismatch between complrehensive and lncRNA annotation on GENCODE
+annotation_gencode <- annotations[["GENCODE"]]
+
+.extract_features <- function(x) {
+  y <- bind_rows(
+    x %>% distinct(gene_id, gene_type) %>%
+      rename(feature_id = 1, feature_type = 2),
+    x %>% distinct(transcript_id, transcript_type) %>%
+      rename(feature_id = 1, feature_type = 2)
+  )
+
+  feature_ids_dup <- y %>%
+    group_by(feature_id) %>%
+    summarize(n = n()) %>%
+    filter(n > 1) %>%
+    pull(feature_id)
+
+  feature_ids_dup %>% length %>% message
+
+  y <- y %>% filter(!(feature_id %in% feature_ids_dup & feature_type == ""))
+
+  y
+}
+
+features_gencode <- annotations[["GENCODE"]] %>%
+  .extract_features
+
+# FIXME: List of p.c. is not correct
+# feature_ids_pc_gencode <- annotations[["GENCODE-ProteinCoding"]] %>%
+#   select(gene_id, transcript_id) %>%
+#   t %>%
+#   as.vector
+
+feature_ids_lnc_gencode <- annotations[["GENCODE-lncRNA"]] %>%
+  select(gene_id, transcript_id) %>%
+  t %>%
+  as.vector
+
+features_gencode <- features_gencode %>%
+  mutate(feature_type = ifelse(feature_type == "protein_coding" , ".protein_coding", feature_type)) %>%
+  mutate(feature_type = ifelse(feature_id %in% feature_ids_lnc_gencode, ".lncrna", feature_type))
+
+features_others <-
+  annotations[!grepl("GENCODE", names(annotations))] %>%
+  map(
+    ~ .x %>%
+      .extract_features %>%
+      mutate(
+        feature_type = ifelse(feature_type %in% c("lncRNA", "lncrna"), ".lncrna", feature_type)
+      ) %>%
+      mutate(
+        feature_type = ifelse(feature_type %in% c("mRNA", "protein_coding"), ".protein_coding", feature_type)
+      )
+  )
+
+features <-
+  c(list(features_gencode) %>% set_names("GENCODE"),
+    features_others)
+
+# FIXME: IDs are duplicated between GENCODE and FANTOM
+# features <- features %>%
+#   enframe %>%
+#   unnest(value) %>%
+#   rename(feature_id = name) %>%
+#   rename(feature_type = value) %>%
+#   mutate(feature_type = ifelse(feature_type == "lncRNA", ".lncrna", feature_type)) %>%
+#   mutate(feature_type = ifelse(feature_type == "mRNA", ".protein_coding", feature_type))
+#
+# features %>%
+#   filter(grepl("ENSG", feature_id)) %>%
+#   pull(feature_type) %>%
+#   table
+#
+# features %>%
+#   filter(grepl("ENST", feature_id)) %>%
+#   pull(feature_type) %>%
+#   table
+#
+# features %>% filter(feature_id %in% .transcript_ids_lnc)
+#
+# features %>% filter(feature_id %in% .transcript_ids_lnc) %>% pull(feature_type) %>% table
+# features %>% filter(grepl("ENST", feature_id) & feature_type == "lncrna") %>% filter(!(feature_id %in% .transcript_ids_lnc)) %>% nrow
+
+ utl$rm_private_vars()
+```
+
+## 3. Load mappability
+```{r}
+paths_mappabilities <- here::here(
+  "results/mappabilities/100/",
+  c(
+    # "FANTOM_CAT.lv3_robust.FANTOM_CAT.lv3_robust.sqlite",
+    "GCF_000001405.39_GRCh38.p13_lncRNA_transcripts.formatted.GCF_000001405.39_GRCh38.p13_lncRNA_transcripts.formatted.aligned.merged.sqlite",
+    "GCF_000001405.39_GRCh38.p13_pc_transcripts.formatted.GCF_000001405.39_GRCh38.p13_pc_transcripts.formatted.aligned.merged.sqlite",
+    "GCF_000001405.39_GRCh38.p13_transcripts.curated.formatted.GCF_000001405.39_GRCh38.p13_transcripts.curated.formatted.aligned.merged.sqlite",
+    "GCF_000001405.39_GRCh38.p13_transcripts.formatted.GCF_000001405.39_GRCh38.p13_transcripts.formatted.aligned.merged.sqlite",
+    "gencode.v31.basic.transcripts.formatted.gencode.v31.basic.transcripts.formatted.aligned.merged.sqlite",
+    # "gencode.v31.lncRNA_transcripts.formatted.gencode.v31.lncRNA_transcripts.formatted.aligned.merged.sqlite",
+    # "gencode.v31.pc_transcripts.formatted.gencode.v31.pc_transcripts.formatted/gencode.v31.pc_transcripts.formatted.gencode.v31.pc_transcripts.formatted.aligned.merged.sqlite",
+    # "gencode.v31_refseq.v109.20190607.transcripts.formatted.gencode.v31_refseq.v109.20190607.transcripts.formatted.aligned.merged.sqlite",
+    "gencode.v31.transcripts.formatted.gencode.v31.transcripts.formatted.aligned.merged.sqlite",
+    # "mitranscriptome.v2.mitranscriptome.v2.sqlite",
+    "NONCODEv5_human.NONCODEv5_human.aligned.merged.sqlite"
+  )
+) %>% set_names(
+  c(
+    # "FANTOM-CAT",
+    "RefSeq-lncRNA",
+    "RefSeq-ProteinCoding",
+    "RefSeq-Curated",
+    "RefSeq",
+    "GENCODE-Basic",
+    # "GENCODE-lncRNA",
+    # "GENCODE-ProteinCoding",
+    # "GENCODE-RefSeq",
+    "GENCODE",
+    # "MiTranscriptome",
+    "NONCODE"
+  )
+)
+
+load_mappability <- function(path, name, feature_type) {
+  conn <- RSQLite::SQLite() %>% RSQLite::dbConnect(path, synchronous = "off")
+
+  .name <- name %>%
+    strsplit("-") %>%
+    sapply("[", 1)
+
+  path %>% message
+  .name %>% message
+
+  df <- RSQLite::dbGetQuery(conn, paste0("select * from ", feature_type, "_mappabilities;")) %>%
+    set_names(c("feature_id", "mappability")) %>%
+    left_join(features[[.name]], by = "feature_id") %>%
+    rename(biotype = feature_type)
+
+  RSQLite::dbDisconnect(conn)
+
+  df
+}
+
+mappabilities <- paths_mappabilities %>%
+  enframe(value = "path") %>%
+  crossing(feature_type = c("gene", "transcript")) %>%
+  mutate(data = pmap(., load_mappability))
+
+.mean_mappability <- function(x) {
+  .all <- x %>% .$mappability %>% mean
+  .pc <- x %>% filter(biotype == ".protein_coding") %>% .$mappability %>% mean
+  .lncrna <- x %>% filter(biotype == ".lncrna") %>% .$mappability %>% mean
+
+  list(all = .all, mrna = .pc, lncrna = .lncrna) %>%
+    enframe %>%
+    unnest(value) %>%
+    rename(biotype = name) %>%
+    rename(mean = value)
+}
+
+.n <- function(x) {
+  .all <- x %>% nrow
+  .pc <- x %>% filter(biotype == ".protein_coding") %>% nrow
+  .lncrna <- x %>% filter(biotype == ".lncrna") %>% nrow
+
+  list(all = .all, mrna = .pc, lncrna = .lncrna) %>%
+    enframe %>%
+    unnest(value) %>%
+    rename(biotype = name) %>%
+    rename(n = value)
+}
+
+mappabilities <- mappabilities %>%
+  mutate(mean_mappability = map(data, ~ .mean_mappability(.x))) %>%
+  mutate(n = map(data, ~ .n(.x)))
+
+mappabilities %>%
+  select(name, feature_type, mean_mappability) %>%
+  unnest(3) %>%
+  write_tsv(file.path(OUTPUT_DIR, "mean_mappability_annotations_data.tsv"))
+
+mappabilities %>%
+  select(name, feature_type, n) %>%
+  unnest(3) %>%
+  write_tsv(file.path(OUTPUT_DIR, "n_features_annotations_data.tsv"))
+
+utl$rm_private_vars()
+```
+
+
+## 5. Draw plots
+
+### 5.1. All biotype
+```{r fig.height=4.6, fig.width=9.6}
+.data <- mappabilities
+
+.draw <- function(name, data, feature_type, x) {
+  .theme <- theme(
+    text = element_text(size = 18),
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 18)
+  )
+
+  .xlab <- "Transcript mappability"
+
+  if (feature_type != "transcript") .xlab <- "Gene mappability"
+
+  g <- data %>%
+    ggpubr::gghistogram(
+      x = x,
+      title = name,
+      add = "mean",
+      rug = FALSE,
+      color = "#222222",
+      fill = "#222222",
+      alpha = 0.125,
+      xlab = .xlab,
+      ylab = "Frequency"
+    )
+  g <- g + .theme
+}
+
+.data <- .data %>%
+  mutate(plot = pmap(
+    list(
+      name = name,
+      data = data,
+      feature_type = feature_type,
+      x = "mappability"
+    ),
+    .draw
+  ))
+
+.g1 <- .data %>%
+  filter(name == "GENCODE" & feature_type == "transcript") %>%
+  pull(plot) %>% .[[1]]
+
+.legend <- ggpubr::get_legend(.g1)
+
+.plots_all <- ggpubr::ggarrange(
+  plotlist = .data$plot,
+  nrow = length(paths_mappabilities), ncol = 2,
+  common.legend = TRUE, legend = "bottom"
+)
+
+.plots_all %>%
+  ggsave(plot = ., file = file.path(OUTPUT_DIR, "mappabilities_alltype_all_hist.pdf"), width = 9.6 * 4, height = 6.4 * 4)
+
+.plotlist <- .data %>%
+  filter(feature_type == "transcript") %>%
+  filter(name %in% c("GENCODE", "GENCODE-Basic", "RefSeq", "RefSeq-Curated", "NONCODE")) %>%
+  select(name, plot) %>%
+  arrange(factor(name, levels = c("GENCODE", "GENCODE-Basic", "RefSeq", "RefSeq-Curated", "NONCODE"))) %>%
+  deframe %>%
+  map(utl$rm_legend)
+
+.plotlist <- map2(
+  .plotlist,
+  paste0("(", LETTERS, ")")[1:length(.plotlist)],
+  ~ utl$add_lab(.x, .y)
+)
+
+.plots_selected <- ggpubr::ggarrange(
+  plotlist = .plotlist,
+  nrow = 3,
+  ncol = 2,
+  legend = "none"
+) %>% ggpubr::annotate_figure(bottom = .legend)
+
+.plots_selected %>%
+  ggsave(plot = ., file = file.path(OUTPUT_DIR, "mappabilities_alltype_major_hist.pdf"), width = 6.4 * 2, height = 6.4 * 2)
+
+utl$rm_private_vars()
+```
+
+### 5.2. RNA, lncRNA separately
+```{r}
+.data <- mappabilities
+
+.draw <- function(name, data, feature_type, x) {
+  .theme <- theme(
+    text = element_text(size = 18),
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 18)
+  )
+
+  .xlab <- "Transcript mappability"
+
+  if (feature_type != "transcript") .xlab <- "Gene mappability"
+
+  name %>% message
+
+  g <- data %>%
+    filter(biotype %in% c(".protein_coding", ".lncrna")) %>%
+    mutate(biotype = utl$to_lab(biotype)) %>%
+    ggpubr::gghistogram(
+      x = x,
+      title = name,
+      add = "mean",
+      rug = FALSE,
+      color = "biotype",
+      fill = "biotype",
+      alpha = 0.125,
+      xlab = .xlab,
+      ylab = "Frequency"
+    )
+  g <- g + .theme
+  g <-
+    g + scale_colour_manual(values = c(mRNA = "#00AFBB", lncRNA = "#E7B800"))
+  g <-
+    g + scale_fill_manual(values = c(mRNA = "#00AFBB", lncRNA = "#E7B800"))
+}
+
+.data <- .data %>%
+  mutate(plot = pmap(
+    list(
+      name = name,
+      data = data,
+      feature_type = feature_type,
+      x = "mappability"
+    ),
+    .draw
+  ))
+
+.g1 <- .data %>%
+  filter(name == "GENCODE" & feature_type == "transcript") %>%
+  pull(plot) %>% .[[1]]
+
+.legend <- ggpubr::get_legend(.g1)
+
+.plots_all <- ggpubr::ggarrange(
+  plotlist = .data$plot,
+  nrow = length(paths_mappabilities), ncol = 2,
+  common.legend = TRUE, legend = "bottom"
+)
+
+.plots_all %>%
+  ggsave(plot = ., file = file.path(OUTPUT_DIR, "mappabilities_biotype_all_hist.pdf"), width = 9.6 * 4, height = 6.4 * 4)
+
+.rm_legend <- function(g) {
+  if (is.null(g)) return(NULL)
+  (g + guides(feature_type = FALSE)) + theme(legend.position = "none")
+}
+
+.plotlist <- .data %>%
+  filter(feature_type == "transcript") %>%
+  filter(name %in% c("GENCODE", "GENCODE-Basic", "RefSeq", "RefSeq-Curated", "NONCODE")) %>%
+  select(name, plot) %>%
+  arrange(factor(name, levels = c("GENCODE", "GENCODE-Basic", "RefSeq", "RefSeq-Curated", "NONCODE"))) %>%
+  deframe %>%
+  map(.rm_legend)
+
+.plotlist <- map2(
+  .plotlist,
+  paste0("(", LETTERS, ")")[1:length(.plotlist)],
+  ~ utl$add_lab(.x, .y)
+)
+
+.plots_selected <- ggpubr::ggarrange(
+  plotlist = .plotlist,
+  nrow = 3,
+  ncol = 2,
+  legend = "none"
+) %>% ggpubr::annotate_figure(bottom = .legend)
+
+.plots_selected %>%
+  ggsave(plot = ., file = file.path(OUTPUT_DIR, "mappabilities_biotype_major_hist.pdf"), width = 6.4 * 2, height = 6.4 * 2)
+
+utl$rm_private_vars()
+```
+
+### 5.3. Curation methods separately
+```{r}
+.data <- mappabilities %>%
+  filter(feature_type == "transcript") %>%
+  filter(name %in% c("GENCODE", "RefSeq")) %>%
+  mutate(data = map(data,
+                    ~ .x %>% mutate(
+                      curated = factor(ifelse(feature_id %in% feature_ids_curated, TRUE, FALSE))
+                    )))
+
+
+feature_ids_curated <- c(annotations[["GENCODE"]] %>% filter(source %in% "HAVANA") %>% pull(transcript_id) %>% unique,
+                         annotations[["RefSeq"]] %>% filter(source %in% c("BestRefSeq", "Curated Genomic")) %>% pull(transcript_id) %>% unique)
+
+
+.draw <- function(name, data, feature_type, x) {
+  .theme <- theme(
+    text = element_text(size = 18),
+    legend.position = "bottom",
+    legend.text = element_text(size = 18)
+  )
+
+  .xlab <- "Transcript mappability"
+
+  if (feature_type != "transcript") .xlab <- "Gene mappability"
+
+  name %>% message
+
+  g <- data %>%
+    ggpubr::gghistogram(
+      x = x,
+      title = name,
+      add = "mean",
+      rug = FALSE,
+      color = "curated",
+      fill = "curated",
+      alpha = 0.125,
+      xlab = .xlab,
+      ylab = "Frequency"
+    )
+  g <- g + .theme
+}
+
+.data <- .data %>%
+  mutate(plot = pmap(
+    list(
+      name = name,
+      data = data,
+      feature_type = feature_type,
+      x = "mappability"
+    ),
+    .draw
+  ))
+
+.g1 <- .data %>%
+  filter(name == "GENCODE" & feature_type == "transcript") %>%
+  pull(plot) %>% .[[1]]
+
+.legend <- ggpubr::get_legend(.g1)
+
+.plots_all <- ggpubr::ggarrange(
+  plotlist = .data$plot,
+  nrow = 1, ncol = 2,
+  common.legend = TRUE, legend = "bottom"
+)
+
+.plots_all %>%
+  ggsave(plot = ., file = file.path(OUTPUT_DIR, "mappabilities_curated_not_hist.pdf"), width = 9.6 * 2, height = 6.4 * 1)
+
+.rm_legend <- function(g) {
+  if (is.null(g)) return(NULL)
+  (g + guides(feature_type = FALSE)) + theme(legend.position = "none")
+}
+
+.plotlist <- .data %>%
+  filter(feature_type == "transcript") %>%
+  filter(name %in% c("GENCODE", "GENCODE-Basic", "RefSeq", "RefSeq-Curated", "NONCODE")) %>%
+  select(name, plot) %>%
+  arrange(factor(name, levels = c("GENCODE", "GENCODE-Basic", "RefSeq", "RefSeq-Curated", "NONCODE"))) %>%
+  deframe %>%
+  map(.rm_legend)
+
+.plotlist <- map2(
+  .plotlist,
+  paste0("(", LETTERS, ")")[1:length(.plotlist)],
+  ~ utl$add_lab(.x, .y)
+)
+
+.plots_selected <- ggpubr::ggarrange(
+  plotlist = .plotlist,
+  nrow = 3,
+  ncol = 2,
+  legend = "none"
+) %>% ggpubr::annotate_figure(bottom = .legend)
+
+.plots_selected %>%
+  ggsave(plot = ., file = file.path(OUTPUT_DIR, "mappabilities_biotype_major_hist.pdf"), width = 6.4 * 2, height = 6.4 * 2)
+
+utl$rm_private_vars()
+```

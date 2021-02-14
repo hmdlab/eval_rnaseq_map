@@ -1,0 +1,115 @@
+-- Settings
+PRAGMA busy_timeout = 864000000;
+PRAGMA cache_size = 48000000;
+-- Import data.mode tabs DROP TABLE if EXISTS alignments;
+CREATE TABLE if NOT EXISTS alignments(
+  qname,
+  rname
+);.import '{{ tsv_aligned }}' alignments vacuum;
+-- Calculate mappability
+attach database '{{ annotation }}' AS ext;
+DROP TABLE if EXISTS annotation_alignments;
+CREATE TABLE if NOT EXISTS annotation_alignments (
+  id,
+  qname,
+  qgene_id,
+  rname,
+  rgene_id
+);
+INSERT INTO
+  annotation_alignments
+SELECT
+  al.id,
+  al.qname,
+  an1.gene_id,
+  al.rname,
+  an2.gene_id
+FROM
+  (
+    SELECT
+      qname AS id,
+      SUBSTR(qname, 1, instr(qname, '|') -1) AS qname,
+      SUBSTR(qname, instr(qname, '|') + 1, LENGTH(qname)) AS pos,
+      rname
+    FROM
+      alignments) al
+      LEFT JOIN (
+        SELECT
+          DISTINCT transcript_id,
+          gene_id
+        FROM
+          ext.annotations
+        WHERE
+          feature = 'exon'
+      ) an1
+      ON al.qname = an1.transcript_id
+      LEFT JOIN (
+        SELECT
+          DISTINCT transcript_id,
+          gene_id
+        FROM
+          ext.annotations
+        WHERE
+          feature = 'exon'
+      ) an2
+      ON al.rname = an2.transcript_id;
+DROP TABLE if EXISTS transcript_alignment_truths;
+CREATE TABLE if NOT EXISTS transcript_alignment_truths (
+        id,
+        qname,
+        TRUE,
+        FALSE
+      );
+    INSERT INTO
+      transcript_alignment_truths
+    SELECT
+      id,
+      qname,
+      SUM(
+        CASE
+          WHEN qname = rname THEN 1
+          ELSE 0
+        END
+      ) AS TRUE,
+      SUM(
+        CASE
+          WHEN qname <> rname THEN 1
+          ELSE 0
+        END
+      ) AS FALSE
+    FROM
+      annotation_alignments
+    GROUP BY
+      id;
+DROP TABLE if EXISTS gene_alignment_truths;
+CREATE TABLE if NOT EXISTS gene_alignment_truths (
+        id,
+        qname,
+        TRUE,
+        FALSE
+      );
+    INSERT INTO
+      gene_alignment_truths
+    SELECT
+      id,
+      qgene_id AS qname,
+      SUM(
+        CASE
+          WHEN qgene_id = rgene_id THEN 1
+          ELSE 0
+        END
+      ) AS TRUE,
+      SUM(
+        CASE
+          WHEN qgene_id <> rgene_id THEN 1
+          ELSE 0
+        END
+      ) AS FALSE
+    FROM
+      annotation_alignments
+    GROUP BY
+      id;
+-- Drop data tables
+      DROP TABLE if EXISTS alignments;
+DROP TABLE if EXISTS annotation_alignments;
+vacuum;
