@@ -1,4 +1,4 @@
-# Project: The impact of gene annotation on RNA-seq differential expression analysis in human study 
+# Project: Impact of human gene annotation on RNA-seq differential expression analysis 
 
 ## Scripts used
 

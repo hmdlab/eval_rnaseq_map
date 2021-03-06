@@ -24,9 +24,10 @@ to_lab <- function(x) {
     protein_coding = "mRNA",
     .protein_coding = "mRNA", # XXX
     lncrna = "lncRNA",
-    .lncrna = "lncRNA", # XX
+    .lncrna = "lncRNA", # XXX
     other = "Others",
     others = "Others",
+    .others = "Others", # XXX
     length = "Read length (bases)",
     depth = "Library size (million reads)",
     reps = "Number of replicates",
@@ -84,9 +85,12 @@ to_color <- function(x) {
     "complete" = "#E7B800",
     "complicated" = "#FC4E07",
     "mrna" = "#00AFBB",
+    "mRNA" = "#00AFBB",
     "lncrna" = "#E7B800",
-    "other" = "#FC4E07",
-    "others" = "#FC4E07",
+    "lncRNA" = "#E7B800",
+    "other" = "#C07E7E",
+    "others" = "#C07E7E",
+    "Others" = "#C07E7E",
     "all" = "#888888"
   )
 
@@ -606,6 +610,8 @@ save_plot <-
       height = height,
       device = cairo_pdf
     )
+
+    embedFonts(path_)
 
     return(NULL)
   }

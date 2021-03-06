@@ -26,7 +26,8 @@ paths_annotation <- here::here(
     "grch38/annotations/gencode/gencode.v31.long_noncoding_RNAs.gtf",
     "grch38/annotations/gencode/gencode.v31.pc.gtf",
     "grch38/annotations/refseq/GCF_000001405.39_GRCh38.p13_genomic.formatted.gtf",
-    "grch38/annotations/noncode/NONCODEv5_hg38.lncAndGene_formatted.gtf",
+    "grch38/annotations/noncode/NONCODEv5_hg38.lncAndGene.gtf",
+    # "grch38/annotations/noncode/NONCODEv5_hg38.lncAndGene_formatted.gtf",
     # "grch37/annotations/fantomcat/FANTOM_CAT.lv3_robust.unnormalized.gtf",
     "grch37/annotations/mitranscriptome/mitranscriptome.v2.gtf"
   )
@@ -44,7 +45,6 @@ paths_annotation <- here::here(
 
 annotations <- paths_annotation %>%
   map(~ utl$load_gtf_(.x, types = c("exon")))
-
 
 # NOTE: Replace feature_type due to a mismatch between complrehensive and lncRNA annotation on GENCODE
 annotation_gencode <- annotations[["GENCODE"]]
@@ -86,7 +86,9 @@ feature_ids_lnc_gencode <- annotations[["GENCODE-lncRNA"]] %>%
 
 features_gencode <- features_gencode %>%
   mutate(feature_type = ifelse(feature_type == "protein_coding" , ".protein_coding", feature_type)) %>%
-  mutate(feature_type = ifelse(feature_id %in% feature_ids_lnc_gencode, ".lncrna", feature_type))
+  mutate(feature_type = ifelse(feature_id %in% feature_ids_lnc_gencode, ".lncrna", feature_type)) %>%
+  mutate(feature_type = ifelse(!(feature_type %in% c(".lncrna", ".protein_coding")), ".others", feature_type))
+
 
 features_others <-
   annotations[!grepl("GENCODE", names(annotations))] %>%
@@ -98,36 +100,15 @@ features_others <-
       ) %>%
       mutate(
         feature_type = ifelse(feature_type %in% c("mRNA", "protein_coding"), ".protein_coding", feature_type)
+      ) %>%
+      mutate(
+        feature_type = ifelse(!(feature_type %in% c(".lncrna", ".protein_coding")), ".others", feature_type)
       )
   )
 
-features <-
+  features <-
   c(list(features_gencode) %>% set_names("GENCODE"),
     features_others)
-
-# FIXME: IDs are duplicated between GENCODE and FANTOM
-# features <- features %>%
-#   enframe %>%
-#   unnest(value) %>%
-#   rename(feature_id = name) %>%
-#   rename(feature_type = value) %>%
-#   mutate(feature_type = ifelse(feature_type == "lncRNA", ".lncrna", feature_type)) %>%
-#   mutate(feature_type = ifelse(feature_type == "mRNA", ".protein_coding", feature_type))
-#
-# features %>%
-#   filter(grepl("ENSG", feature_id)) %>%
-#   pull(feature_type) %>%
-#   table
-#
-# features %>%
-#   filter(grepl("ENST", feature_id)) %>%
-#   pull(feature_type) %>%
-#   table
-#
-# features %>% filter(feature_id %in% .transcript_ids_lnc)
-#
-# features %>% filter(feature_id %in% .transcript_ids_lnc) %>% pull(feature_type) %>% table
-# features %>% filter(grepl("ENST", feature_id) & feature_type == "lncrna") %>% filter(!(feature_id %in% .transcript_ids_lnc)) %>% nrow
 
  utl$rm_private_vars()
 ```
@@ -196,20 +177,25 @@ mappabilities <- paths_mappabilities %>%
   .all <- x %>% .$mappability %>% mean
   .pc <- x %>% filter(biotype == ".protein_coding") %>% .$mappability %>% mean
   .lncrna <- x %>% filter(biotype == ".lncrna") %>% .$mappability %>% mean
+  .others <- x %>% filter(biotype == ".others") %>% .$mappability %>% mean
 
-  list(all = .all, mrna = .pc, lncrna = .lncrna) %>%
+  list(all = .all, mrna = .pc, lncrna = .lncrna, others = .others) %>%
     enframe %>%
     unnest(value) %>%
     rename(biotype = name) %>%
     rename(mean = value)
 }
 
+feature_ids_curated <- c(annotations[["GENCODE"]] %>% filter(source %in% "HAVANA") %>% pull(transcript_id) %>% unique,
+                         annotations[["RefSeq"]] %>% filter(source %in% c("BestRefSeq", "Curated Genomic")) %>% pull(transcript_id) %>% unique)
+
 .n <- function(x) {
   .all <- x %>% nrow
   .pc <- x %>% filter(biotype == ".protein_coding") %>% nrow
   .lncrna <- x %>% filter(biotype == ".lncrna") %>% nrow
+  .others <- x %>% filter(biotype == ".others") %>% nrow
 
-  list(all = .all, mrna = .pc, lncrna = .lncrna) %>%
+  list(all = .all, mrna = .pc, lncrna = .lncrna, others = .others) %>%
     enframe %>%
     unnest(value) %>%
     rename(biotype = name) %>%
@@ -307,17 +293,17 @@ utl$rm_private_vars()
   ~ utl$add_lab(.x, .y)
 )
 
-.plots_selected <- ggpubr::ggarrange(
+.plot_arranged <- ggpubr::ggarrange(
   plotlist = .plotlist,
   nrow = 3,
   ncol = 2,
   legend = "none"
 ) %>% ggpubr::annotate_figure(bottom = .legend)
 
-.plots_selected %>%
+.plot_arranged %>%
   ggsave(plot = ., file = file.path(OUTPUT_DIR, "mappabilities_alltype_major_hist.pdf"), width = 6.4 * 2, height = 6.4 * 2)
 
-utl$rm_private_vars()
+# utl$rm_private_vars()
 ```
 
 ### 5.2. RNA, lncRNA separately
@@ -339,7 +325,7 @@ utl$rm_private_vars()
   name %>% message
 
   g <- data %>%
-    filter(biotype %in% c(".protein_coding", ".lncrna")) %>%
+    filter(biotype %in% c(".protein_coding", ".lncrna", ".others")) %>%
     mutate(biotype = utl$to_lab(biotype)) %>%
     ggpubr::gghistogram(
       x = x,
@@ -354,9 +340,9 @@ utl$rm_private_vars()
     )
   g <- g + .theme
   g <-
-    g + scale_colour_manual(values = c(mRNA = "#00AFBB", lncRNA = "#E7B800"))
+    g + scale_colour_manual(values = c(mRNA = utl$to_color("mRNA"), lncRNA = utl$to_color("lncRNA"), Others = utl$to_color("Others")))
   g <-
-    g + scale_fill_manual(values = c(mRNA = "#00AFBB", lncRNA = "#E7B800"))
+    g + scale_fill_manual(values = c(mRNA = utl$to_color("mRNA"), lncRNA = utl$to_color("lncRNA"), Others = utl$to_color("Others")))
 }
 
 .data <- .data %>%
@@ -404,17 +390,17 @@ utl$rm_private_vars()
   ~ utl$add_lab(.x, .y)
 )
 
-.plots_selected <- ggpubr::ggarrange(
+.plot_arranged <- ggpubr::ggarrange(
   plotlist = .plotlist,
   nrow = 3,
   ncol = 2,
   legend = "none"
 ) %>% ggpubr::annotate_figure(bottom = .legend)
 
-.plots_selected %>%
+.plot_arranged %>%
   ggsave(plot = ., file = file.path(OUTPUT_DIR, "mappabilities_biotype_major_hist.pdf"), width = 6.4 * 2, height = 6.4 * 2)
 
-utl$rm_private_vars()
+# utl$rm_private_vars()
 ```
 
 ### 5.3. Curation methods separately
@@ -426,10 +412,6 @@ utl$rm_private_vars()
                     ~ .x %>% mutate(
                       curated = factor(ifelse(feature_id %in% feature_ids_curated, TRUE, FALSE))
                     )))
-
-
-feature_ids_curated <- c(annotations[["GENCODE"]] %>% filter(source %in% "HAVANA") %>% pull(transcript_id) %>% unique,
-                         annotations[["RefSeq"]] %>% filter(source %in% c("BestRefSeq", "Curated Genomic")) %>% pull(transcript_id) %>% unique)
 
 
 .draw <- function(name, data, feature_type, x) {
@@ -505,15 +487,15 @@ feature_ids_curated <- c(annotations[["GENCODE"]] %>% filter(source %in% "HAVANA
   ~ utl$add_lab(.x, .y)
 )
 
-.plots_selected <- ggpubr::ggarrange(
+.plot_arranged <- ggpubr::ggarrange(
   plotlist = .plotlist,
   nrow = 3,
   ncol = 2,
   legend = "none"
 ) %>% ggpubr::annotate_figure(bottom = .legend)
 
-.plots_selected %>%
-  ggsave(plot = ., file = file.path(OUTPUT_DIR, "mappabilities_biotype_major_hist.pdf"), width = 6.4 * 2, height = 6.4 * 2)
+.plot_arranged %>%
+  ggsave(plot = ., file = file.path(OUTPUT_DIR, "mappabilities_curated_hist.pdf"), width = 6.4 * 2, height = 6.4 * 2)
 
 utl$rm_private_vars()
 ```
