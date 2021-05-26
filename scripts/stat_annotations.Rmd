@@ -19,7 +19,7 @@ OUTPUT_DIR <- here::here("results/figs_tbls")
 ## 2. Load annotations
 ```{r}
 paths_annotation <- here::here(
-  "shared/assets/references",
+  "share/assets/references",
   c(
     "grch37/annotations/fantomcat/FANTOM_CAT.lv3_robust.unnormalized.gtf",
     "grch37/annotations/fantomcat/FANTOM_CAT.lv3_robust.all_lncRNA.unnormalized.gtf",
@@ -98,7 +98,7 @@ annotations <- paths_annotation %>%
     rename(feature = name) %>%
     rename(n = value) %>%
     mutate(biotype = "lncrna")
-  
+
   bind_rows(
     .row_all,
     .row_pc,

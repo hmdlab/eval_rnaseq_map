@@ -1,9 +1,10 @@
 #! /bin/bash
 
+input_dir=$1
 strandedness="fr"
-gtf="shared/assets/references/grch38/annotations/gencode/gencode.v31.annotation.gtf"
+gtf="share/assets/references/grch38/annotations/gencode/gencode.v31.annotation.gtf"
 
-find results/test01_main -name "*.bam" | \
+find $input_dir -name "*.bam" | \
   sort | \
   grep -v unmapped.bam | \
   grep -v Aligned.toTranscriptome.out.bam | \

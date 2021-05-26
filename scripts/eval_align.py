@@ -10,8 +10,8 @@
 Evaluation alignment
 
 Usage:
-    eval_align_result.py calc [options] <aligned_tsv> 
-    eval_align_result.py agg [options] <result_sqlite>... 
+    eval_align_result.py calc [options] <aligned_tsv>
+    eval_align_result.py agg [options] <result_sqlite>...
 
 Options:
     --template-dir <PATAH>  : Template file (required run on qsub)

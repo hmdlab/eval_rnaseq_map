@@ -10,6 +10,8 @@ create table if not exists alignments(qname, rname);
 
 vacuum;
 
+select 'alignment', count(*) from alignments;
+
 -- Calculate mappability
 attach database '{{ annotation }}' as ext;
 
@@ -30,7 +32,7 @@ insert into annotation_alignments
 drop table if exists transcript_alignment_truths;
 create table if not exists transcript_alignment_truths (id, qname, true, false);
 insert into transcript_alignment_truths
-select 
+select
   id,
   qname,
   sum(case when qname = rname then 1 else 0 end) as true,
@@ -40,12 +42,15 @@ select
 drop table if exists gene_alignment_truths;
 create table if not exists gene_alignment_truths (id, qname, true, false);
 insert into gene_alignment_truths
-select 
+select
   id,
   qgene_id as qname,
   sum(case when qgene_id = rgene_id then 1 else 0 end) as true,
   sum(case when qgene_id <> rgene_id then 1 else 0 end) as false
   from annotation_alignments group by id;
+
+select 'transcript_alignment_truths', count(*) from transcript_alignment_truths;
+select 'gene_alignment_truths', count(*) from gene_alignment_truths;
 
 -- Drop data tables
 drop table if exists alignments;

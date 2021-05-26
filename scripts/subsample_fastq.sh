@@ -3,7 +3,7 @@
 # Subsampling and subsequence by seqkit
 #
 # Usage:
-#  find *.fastq | sort | xargs qsub -t 1-n*4 this.sh
+#  find *.fastq | sort | xargs qsub -V -t 1-n*4 this.sh
 #
 #$ -S /bin/bash
 #$ -l s_vmem=128G -l mem_req=128G

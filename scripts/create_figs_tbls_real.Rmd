@@ -118,7 +118,7 @@ PATTERNS_GENE <- c(
         names(p) %>%
         grepl("kallisto-sleuth", .)
     )
-  
+
   p[.keep]
 }
 
@@ -221,7 +221,7 @@ results_de_sim_all_gene <-
 ```{r}
 annotation_main <- annotations$gencode
 
-path_annotation <- here::here("shared/assets/references/grch38/annotations/gencode/gencode.v31.annotation.gtf")
+path_annotation <- here::here("share/assets/references/grch38/annotations/gencode/gencode.v31.annotation.gtf")
 
 transcript_lengths <- path_annotation %>%
   utl$load_gtf(types = c("exon")) %>%
@@ -330,7 +330,7 @@ mappability_gene_ids <- mappability_gene_ids %>%
       mutate(n_features = map_int(feature_ids, length)) %>%
       arrange(bin)
   )
-  
+
 mean_abundance_feature_ids <- result_qpcr %>%
   select(feature_id, mean) %>%
   utl$set_bin("mean", num_bins = NUM_BINS, exclude = FALSE) %>%
@@ -414,7 +414,7 @@ mappability_abundance_metrics_real_all_gene %>%
   utl$filter_by_combination("main") %>%
   filter(!is.na(bin.x)) %>%
   mutate(label_bin.y = fct_relabel(bin.y, ~ paste0("qRT-PCR abundance: ", .x))) %>%
-  mutate(`Intervals of gene mappability:` = factor(paste0(bin.x, "; ", interval.x))) %>% 
+  mutate(`Intervals of gene mappability:` = factor(paste0(bin.x, "; ", interval.x))) %>%
   mutate(`Intervals of qRT-PCR abundance:` = factor(paste0(bin.y, "; ", interval.y))) %>%
   group_by(metric) %>%
   nest
@@ -448,7 +448,7 @@ get_legend_intervals <- function(data_, var) {
     legend.key = element_blank(),
     legend.key.size = unit(0, "pt")
   )
-  
+
   g
 
   ggpubr::get_legend(g)
@@ -492,7 +492,7 @@ utl$rm_private_vars()
   utl$filter_by_combination("main") %>%
   filter(is.na(bin.x)) %>%
   mutate(label_bin.y = fct_relabel(bin.y, ~ paste0("qRT-PCR abundance: ", .x))) %>%
-  mutate(`Intervals of gene mappability:` = factor(paste0(bin.x, "; ", interval.x))) %>% 
+  mutate(`Intervals of gene mappability:` = factor(paste0(bin.x, "; ", interval.x))) %>%
   mutate(`Intervals of qRT-PCR abundance:` = factor(paste0(bin.y, "; ", interval.y))) %>%
   group_by(metric) %>%
   nest
@@ -732,7 +732,7 @@ utl$rm_private_vars()
       title = title_
     )
   )
-  
+
   g
 }
 

@@ -114,12 +114,12 @@ load_gtf_ <- function(path, types = c("gene", "transcript", "exon")) {
 
 
 load_annotations <- function(types = c("transcript"), feature_id_ = "transcript_id") {
-  gencode <- here::here("shared/assets/references/grch38/annotations/gencode/gencode.v31.annotation.gtf") %>% load_gtf(types = types)
-  gencode_basic <- here::here("shared/assets/references/grch38/annotations/gencode/gencode.v31.basic.annotation.gtf") %>% load_gtf(types = types)
-  gencode_refseq <- here::here("shared/assets/references/grch38/annotations/gencode_refseq/gencode.v31_refseq.v109.20190607.gtf") %>% load_gtf(types = c("exon"))
+  gencode <- here::here("share/assets/references/grch38/annotations/gencode/gencode.v31.annotation.gtf") %>% load_gtf(types = types)
+  gencode_basic <- here::here("share/assets/references/grch38/annotations/gencode/gencode.v31.basic.annotation.gtf") %>% load_gtf(types = types)
+  gencode_refseq <- here::here("share/assets/references/grch38/annotations/gencode_refseq/gencode.v31_refseq.v109.20190607.gtf") %>% load_gtf(types = c("exon"))
 
   # NOTE: Append general biotype to comprehensive annotation
-  gencode_lncrna <- here::here("shared/assets/references/grch38/annotations/gencode/gencode.v31.long_noncoding_RNAs.gtf") %>% load_gtf(types = types)
+  gencode_lncrna <- here::here("share/assets/references/grch38/annotations/gencode/gencode.v31.long_noncoding_RNAs.gtf") %>% load_gtf(types = types)
 
   gencode$biotype <- "others"
   transcript_ids_lncrna <- gencode_lncrna$transcript_id[!is.na(gencode_lncrna$transcript_id)] %>% unique()

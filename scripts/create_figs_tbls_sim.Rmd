@@ -28,17 +28,18 @@ h.de <- new.env(); source(here::here("scripts/helpers/de_helper.R"), h.de)
 PREFIX <- "sim"
 
 output_dir <- ifelse(length(params$output_dir) > 0, params$output_dir, "results/figs_tbls")
+input_dir <- here::here("results", c("test01_main_r"))
 
 inputs <- bind_rows(
   data.frame(
     dataset = "sim_main",
     condition = c(0),
-    input_dir = here::here("results", c("test01_main")),
+    input_dir = input_dir,
     stringsAsFactors = FALSE
   )
 )
 
-input_true <- here::here("results/sim_cntmat/gencode/params_sim.txt")
+input_true <- here::here("results/sim_cntmat/gencode/params_sim_mod.txt")
 
 NUM_BINS = 3
 ```
@@ -47,7 +48,7 @@ NUM_BINS = 3
 
 ```{r}
 
-path_annotation <- here::here("shared/assets/references/grch38/annotations/gencode/gencode.v31.annotation.gtf")
+path_annotation <- here::here("share/assets/references/grch38/annotations/gencode/gencode.v31.annotation.gtf")
 
 annotations <- utl$load_annotations()
 annotation_main <- annotations$gencode
@@ -130,7 +131,7 @@ results_align_metrics <- inputs_align %>%
     data = map(path, ~ h.align$load_result(.x, "metrics"))
   ) %>%
   mutate(mean_recall = map(data, ~ mean(.x$recall)) %>% unlist) %>%
-  mutate(mean_precision = map(data, ~ mean(.x$precision)) %>% unlist) %>% 
+  mutate(mean_precision = map(data, ~ mean(.x$precision)) %>% unlist) %>%
   mutate(mean_f1 = map(data, ~ mean(.x$f1)) %>% unlist)
 
 results_align_transcript_metrics <- inputs_align %>%
@@ -171,7 +172,7 @@ results_quant_est <- inputs_quant %>%
   mutate(
     data = map2(
       path, name,
-      ~ h.quant$load_result(.x) %>% 
+      ~ h.quant$load_result(.x) %>%
         h.quant$fill_lack(., annotations[[utl$annotation_used(.y)]])
     )
   ) %>%
@@ -222,7 +223,7 @@ result_quant_true_cpm <- result_quant_true_cpm %>%
 
 result_quant_true_tpm <- result_quant_true %>%
   h.quant$to_tpm(transcript_lengths) %>%
-  filter(feature_id %in% feature_ids_expressed) %>%
+  filter(feature_id %in% feature_ids_expressed)
 
 result_quant_true_tpm <- result_quant_true_tpm %>%
   mutate(mean = result_quant_true_tpm %>%
@@ -371,9 +372,9 @@ mappability_metrics_de %>%
 
 calc_coef <- function(x) {
   .x <- x %>% mutate(bin = as.numeric(factor(bin)))
-  
+
   .coef <- lm(.x$value ~ .x$bin)$coefficients
-  
+
   tibble(intercept = .coef[[1]],
          slope = .coef[[2]])
 }
@@ -438,7 +439,7 @@ utl$rm_private_vars()
 .data <- mappability_metrics_quant %>%
   unnest(metrics) %>%
   utl$decorate_metrics() %>%
-  mutate(bin = factor(bin)) %>% 
+  mutate(bin = factor(bin)) %>%
   group_by(dataset, metric) %>%
   nest %>%
   ungroup(dataset)
@@ -500,7 +501,7 @@ utl$rm_private_vars()
 .data <- mappability_metrics_de %>%
   unnest(metrics) %>%
   utl$decorate_metrics() %>%
-  mutate(bin = factor(bin)) %>% 
+  mutate(bin = factor(bin)) %>%
   group_by(dataset, metric) %>%
   nest %>%
   ungroup(dataset)
@@ -897,7 +898,7 @@ mappability_abundance_feature_ids <- left_join(
     nest,
   by = c("bin.x", "bin.y", "interval.x", "interval.y")
 ) %>%
-  mutate(feature_ids1 = map(data.x, ~ pull(.x, feature_id))) %>% 
+  mutate(feature_ids1 = map(data.x, ~ pull(.x, feature_id))) %>%
   mutate(feature_ids2 = map(data.y, ~ pull(.x, feature_id))) %>%
   select(!starts_with("data"))
 
@@ -1025,6 +1026,28 @@ mappability_abundance_metrics_de %>%
 
 ### 6.2 Draw plots
 
+#### 6.2.0 Common definition
+```{r}
+get_legend_intervals <- function(data_, metric, var) {
+  n_fills <- data_[[var]] %>% unique %>% length
+
+  g <- ggpubr::ggbarplot(data_, "bin.x", "bin.y", fill = var)
+  g <- g + scale_fill_manual(values = rep("white", n_fills))
+  g <- g + theme(
+    legend.key = element_blank(),
+    legend.key.size = unit(0, "pt")
+  )
+
+  ggpubr::get_legend(g)
+}
+
+annotate_ext_legend <- function(g, l) {
+ g %>%
+    ggpubr::annotate_figure(bottom = l)
+}
+
+```
+
 #### 6.2.1 Alignment
 
 ```{r}
@@ -1035,7 +1058,7 @@ mappability_abundance_metrics_de %>%
   utl$decorate_metrics() %>%
   mutate(label_bin.y = fct_relabel(bin.y, ~ paste0("True abundance: ", .x))) %>%
   mutate(label_bin.x = fct_relabel(bin.x, ~ paste0("Transcript mappablity: ", .x))) %>%
-  mutate(`Intervals of transcript mappability:` = factor(paste0(bin.x, "; ", interval.x))) %>% 
+  mutate(`Intervals of transcript mappability:` = factor(paste0(bin.x, "; ", interval.x))) %>%
   mutate(`Intervals of true abundance:` = factor(paste0(bin.y, "; ", interval.y))) %>%
   group_by(dataset, metric) %>%
   nest %>%
@@ -1060,24 +1083,6 @@ mappability_abundance_metrics_de %>%
 .data$plot <- .data %>%
   select(data, metric) %>%
   pmap(.draw)
-
-get_legend_intervals <- function(data_, metric, var) {
-  n_fills <- data_[[var]] %>% unique %>% length
-
-  g <- ggpubr::ggbarplot(data_, "bin.x", "bin.y", fill = var)
-  g <- g + scale_fill_manual(values = rep("white", n_fills))
-  g <- g + theme(
-    legend.key = element_blank(),
-    legend.key.size = unit(0, "pt")
-  )
-  
-  ggpubr::get_legend(g)
-}
-
-annotate_ext_legend <- function(g, l) {
- g %>%
-    ggpubr::annotate_figure(bottom = l)
-}
 
 .data$legend1 <- .data %>%
   select(data, metric) %>%
@@ -1137,7 +1142,7 @@ utl$rm_private_vars()
   unnest(metrics) %>%
   utl$decorate_metrics() %>%
   mutate(label_bin.y = fct_relabel(bin.y, ~ paste0("True abundance: ", .x))) %>%
-  mutate(`Intervals of transcript mappability:` = factor(paste0(bin.x, "; ", interval.x))) %>% 
+  mutate(`Intervals of transcript mappability:` = factor(paste0(bin.x, "; ", interval.x))) %>%
   mutate(`Intervals of true abundance:` = factor(paste0(bin.y, "; ", interval.y))) %>%
   group_by(dataset, metric) %>%
   nest %>%
@@ -1200,7 +1205,7 @@ utl$rm_private_vars()
   unnest(metrics) %>%
   utl$decorate_metrics() %>%
   mutate(label_bin.y = fct_relabel(bin.y, ~ paste0("True abundance: ", .x))) %>%
-  mutate(`Intervals of transcript mappability:` = factor(paste0(bin.x, "; ", interval.x))) %>% 
+  mutate(`Intervals of transcript mappability:` = factor(paste0(bin.x, "; ", interval.x))) %>%
   mutate(`Intervals of true abundance:` = factor(paste0(bin.y, "; ", interval.y))) %>%
   group_by(dataset, metric) %>%
   nest %>%
@@ -1318,7 +1323,7 @@ mappability_abundance_biotype_feature_ids <- left_join(
     nest,
   by = c("bin.x", "bin.y", "interval.x", "interval.y", "biotype")
 ) %>%
-  mutate(feature_ids1 = map(data.x, ~ pull(.x, feature_id))) %>% 
+  mutate(feature_ids1 = map(data.x, ~ pull(.x, feature_id))) %>%
   mutate(feature_ids2 = map(data.y, ~ pull(.x, feature_id))) %>%
   select(!starts_with("data")) %>%
   mutate(n_features1 = map_int(feature_ids1, length)) %>%
@@ -1338,7 +1343,7 @@ abundance_biotype_feature_ids <- left_join(
     nest,
   by = c("bin.y", "interval.y", "biotype")
 ) %>%
-  mutate(feature_ids1 = map(data.x, ~ pull(.x, feature_id))) %>% 
+  mutate(feature_ids1 = map(data.x, ~ pull(.x, feature_id))) %>%
   mutate(feature_ids2 = map(data.y, ~ pull(.x, feature_id))) %>%
   select(!starts_with("data")) %>%
   mutate(n_features1 = map_int(feature_ids1, length)) %>%
@@ -1352,7 +1357,7 @@ mappability_mean_abundance_biotype_feature_ids <- mappability_mean_abundance_fea
   left_join(.biotype_feature_ids_unnested, by = "feature_id") %>%
   group_by(bin.x, interval.x, bin.y, interval.y, biotype) %>%
   nest %>%
-  mutate(feature_ids = map(data, ~ pull(.x, feature_id))) %>% 
+  mutate(feature_ids = map(data, ~ pull(.x, feature_id))) %>%
   select(!starts_with("data")) %>%
   mutate(n_features = map_int(feature_ids, length)) %>%
   arrange(bin.x, bin.y, biotype)
@@ -1557,7 +1562,7 @@ mean_abundance_biotype_metrics_de %>%
   summarize(mean = mean(value)) %>%
   utl$decorate_metrics() %>%
   utl$filter_by_combination("main") %>%
-  mutate(biotype = utl$to_factor(biotype)) %>% 
+  mutate(biotype = utl$to_factor(biotype)) %>%
   group_by(dataset, metric) %>%
   nest %>%
   ungroup(dataset)
@@ -1607,7 +1612,7 @@ utl$rm_private_vars()
   summarize(mean = mean(value)) %>%
   utl$decorate_metrics() %>%
   utl$filter_by_combination("main") %>%
-  mutate(biotype = utl$to_factor(biotype)) %>% 
+  mutate(biotype = utl$to_factor(biotype)) %>%
   group_by(dataset, metric) %>%
   nest %>%
   ungroup(dataset)
@@ -1655,7 +1660,7 @@ utl$rm_private_vars()
   summarize(mean = mean(value)) %>%
   utl$decorate_metrics() %>%
   utl$filter_by_combination("main") %>%
-  mutate(biotype = utl$to_factor(biotype)) %>% 
+  mutate(biotype = utl$to_factor(biotype)) %>%
   group_by(dataset, metric) %>%
   nest %>%
   ungroup(dataset)

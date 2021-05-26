@@ -27,7 +27,7 @@ idx=$(((SGE_TASK_ID-1) * 2))
 strand=${strands[idx]}
 
 # GENCODE v31 comprehensive
-index_prefix="$HOME/shared/assets/references/grch38/indexes/rsem/gencode.v31.transcripts.formatted.ercc"
+index_prefix="$HOME/share/assets/references/grch38/indexes/rsem/gencode.v31.transcripts.formatted.ercc"
 
 # anno_bam=$2              # STAR alignment to annotation
 # paired_end="true"        # "true" if alignment was on paired-end data.

@@ -20,7 +20,7 @@ OUTPUT_DIR <- here::here("results/figs_tbls")
 ```{r}
 # NOTE: This Order is important
 paths_annotation <- here::here(
-  "shared/assets/references",
+  "share/assets/references",
   c(
     "grch38/annotations/gencode/gencode.v31.annotation.gtf",
     "grch38/annotations/gencode/gencode.v31.long_noncoding_RNAs.gtf",
@@ -101,19 +101,19 @@ features <-
 #   rename(feature_type = value) %>%
 #   mutate(feature_type = ifelse(feature_type == "lncRNA", ".lncrna", feature_type)) %>%
 #   mutate(feature_type = ifelse(feature_type == "mRNA", ".protein_coding", feature_type))
-# 
+#
 # features %>%
 #   filter(grepl("ENSG", feature_id)) %>%
 #   pull(feature_type) %>%
 #   table
-# 
+#
 # features %>%
 #   filter(grepl("ENST", feature_id)) %>%
 #   pull(feature_type) %>%
 #   table
-# 
+#
 # features %>% filter(feature_id %in% .transcript_ids_lnc)
-# 
+#
 # features %>% filter(feature_id %in% .transcript_ids_lnc) %>% pull(feature_type) %>% table
 # features %>% filter(grepl("ENST", feature_id) & feature_type == "lncrna") %>% filter(!(feature_id %in% .transcript_ids_lnc)) %>% nrow
 
@@ -135,7 +135,7 @@ paths_mappabilities <- here::here(
     # "gencode.v31.pc_transcripts.formatted.gencode.v31.pc_transcripts.formatted/gencode.v31.pc_transcripts.formatted.gencode.v31.pc_transcripts.formatted.aligned.merged.sqlite",
     # "gencode.v31_refseq.v109.20190607.transcripts.formatted.gencode.v31_refseq.v109.20190607.transcripts.formatted.aligned.merged.sqlite",
     "gencode.v31.transcripts.formatted.gencode.v31.transcripts.formatted.aligned.merged.sqlite",
-    # "mitranscriptome.v2.mitranscriptome.v2.sqlite", 
+    # "mitranscriptome.v2.mitranscriptome.v2.sqlite",
     "NONCODEv5_human.NONCODEv5_human.aligned.merged.sqlite"
   )
 ) %>% set_names(
@@ -157,14 +157,14 @@ paths_mappabilities <- here::here(
 
 load_mappability <- function(path, name, feature_type) {
   conn <- RSQLite::SQLite() %>% RSQLite::dbConnect(path, synchronous = "off")
-  
+
   .name <- name %>%
     strsplit("-") %>%
     sapply("[", 1)
 
   path %>% message
   .name %>% message
-  
+
   df <- RSQLite::dbGetQuery(conn, paste0("select * from ", feature_type, "_mappabilities;")) %>%
     set_names(c("feature_id", "mappability")) %>%
     left_join(features[[.name]], by = "feature_id") %>%
@@ -184,7 +184,7 @@ mappabilities <- paths_mappabilities %>%
   .all <- x %>% .$mappability %>% mean
   .pc <- x %>% filter(biotype == ".protein_coding") %>% .$mappability %>% mean
   .lncrna <- x %>% filter(biotype == ".lncrna") %>% .$mappability %>% mean
-  
+
   list(all = .all, mrna = .pc, lncrna = .lncrna) %>%
     enframe %>%
     unnest(value) %>%
@@ -196,7 +196,7 @@ mappabilities <- paths_mappabilities %>%
   .all <- x %>% nrow
   .pc <- x %>% filter(biotype == ".protein_coding") %>% nrow
   .lncrna <- x %>% filter(biotype == ".lncrna") %>% nrow
-  
+
   list(all = .all, mrna = .pc, lncrna = .lncrna) %>%
     enframe %>%
     unnest(value) %>%
@@ -235,11 +235,11 @@ utl$rm_private_vars()
     legend.title = element_blank(),
     legend.text = element_text(size = 18)
   )
-  
+
   .xlab <- "Transcript mappability"
-  
+
   if (feature_type != "transcript") .xlab <- "Gene mappability"
-  
+
   g <- data %>%
     ggpubr::gghistogram(
       x = x,
@@ -319,14 +319,14 @@ utl$rm_private_vars()
     legend.title = element_blank(),
     legend.text = element_text(size = 18)
   )
-  
+
   .xlab <- "Transcript mappability"
-  
+
   if (feature_type != "transcript") .xlab <- "Gene mappability"
-  
+
   # browser()
   name %>% message
-  
+
   g <- data %>%
     filter(biotype %in% c(".protein_coding", ".lncrna")) %>%
     mutate(biotype = utl$to_lab(biotype)) %>%

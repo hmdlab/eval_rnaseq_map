@@ -3,11 +3,12 @@
 # Calculate mappability
 #
 # Usage:
-#   qsub -V -t 1-10 this.sh [subcommand]
+#   qsub -V -t 1-5 this.sh [subcommand]
 #
 #$ -S /bin/bash
 #$ -l s_vmem=256G -l mem_req=256G
-#$ -l d_rt=1488:00:00 -l s_rt=1488:00:00
+#$ -l d_rt=480:00:00 -l s_rt=480:00:00
+#$ -l intel
 #$ -cwd
 #$ -o ./ugelogs/
 #$ -e ./ugelogs/
@@ -46,36 +47,21 @@ agg () {
   eval $cmd
 }
 
-
-src_dir="results/mappabilities/100"
+src_dir=$2
 
 annotations=(
-shared/assets/references/grch37/annotations/fantomcat/FANTOM_CAT.lv3_robust.sqlite \
-shared/assets/references/grch38/annotations/refseq/GCF_000001405.39_GRCh38.p13_genomic.formatted_curated.sqlite \
-shared/assets/references/grch38/annotations/refseq/GCF_000001405.39_GRCh38.p13_genomic.formatted.sqlite \
-shared/assets/references/grch38/annotations/refseq/GCF_000001405.39_GRCh38.p13_genomic.formatted.sqlite \
-shared/assets/references/grch38/annotations/refseq/GCF_000001405.39_GRCh38.p13_genomic.formatted.sqlite \
-shared/assets/references/grch38/annotations/gencode/gencode.v31.annotation.sqlite \
-shared/assets/references/grch38/annotations/gencode/gencode.v31.annotation.sqlite \
-shared/assets/references/grch38/annotations/gencode/gencode.v31.annotation.sqlite \
-shared/assets/references/grch38/annotations/gencode_refseq/gencode.v31_refseq.v109.20190607.sqlite \
-shared/assets/references/grch38/annotations/gencode/gencode.v31.annotation.sqlite \
-shared/assets/references/grch37/annotations/mitranscriptome/mitranscriptome.v2.sqlite \
-shared/assets/references/grch38/annotations/noncode/NONCODEv5_hg38.lncAndGene.sqlite
+share/assets/references/grch38/annotations/refseq/GCF_000001405.39_GRCh38.p13_genomic.formatted_curated.sqlite \
+share/assets/references/grch38/annotations/refseq/GCF_000001405.39_GRCh38.p13_genomic.formatted.sqlite \
+share/assets/references/grch38/annotations/gencode/gencode.v31.annotation.sqlite \
+share/assets/references/grch38/annotations/gencode/gencode.v31.annotation.sqlite \
+share/assets/references/grch38/annotations/noncode/NONCODEv5_hg38.lncAndGene.sqlite
 )
 
 file_roots=(
-FANTOM_CAT.lv3_robust.FANTOM_CAT.lv3_robust \
 GCF_000001405.39_GRCh38.p13_transcripts.curated.formatted.GCF_000001405.39_GRCh38.p13_transcripts.curated.formatted \
 GCF_000001405.39_GRCh38.p13_transcripts.formatted.GCF_000001405.39_GRCh38.p13_transcripts.formatted \
-GCF_000001405.39_GRCh38.p13_pc_transcripts.formatted.GCF_000001405.39_GRCh38.p13_pc_transcripts.formatted \
-GCF_000001405.39_GRCh38.p13_lncRNA_transcripts.formatted.GCF_000001405.39_GRCh38.p13_lncRNA_transcripts.formatted \
 gencode.v31.basic.transcripts.formatted.gencode.v31.basic.transcripts.formatted \
-gencode.v31.lncRNA_transcripts.formatted.gencode.v31.lncRNA_transcripts.formatted \
-gencode.v31.pc_transcripts.formatted.gencode.v31.pc_transcripts.formatted \
-gencode.v31_refseq.v109.20190607.transcripts.formatted.gencode.v31_refseq.v109.20190607.transcripts.formatted \
 gencode.v31.transcripts.formatted.gencode.v31.transcripts.formatted \
-mitranscriptome.v2.mitranscriptome.v2 \
 NONCODEv5_human.NONCODEv5_human
 )
 

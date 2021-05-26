@@ -22,8 +22,8 @@ if [ ! -e ${output_dir} ]; then
 fi
 
 # GENCODE v31 Comprehensive
-star_index="$HOME/shared/assets/references/grch38/indexes/star/GRCh38.primary_assembly.genome.ercc.gencode.v31.annotation.ercc"
-annotation="$HOME/shared/assets/references/grch38/annotations/gencode/gencode.v31.annotation.ercc.gtf"
+star_index="$HOME/share/assets/references/grch38/indexes/star/GRCh38.primary_assembly.genome.ercc.gencode.v31.annotation.ercc"
+annotation="$HOME/share/assets/references/grch38/annotations/gencode/gencode.v31.annotation.ercc.gtf"
 
 library_id=""      # Library identifier which will be added to bam header.
 ncpus=8            # Number of cpus available.
