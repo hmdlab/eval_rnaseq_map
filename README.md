@@ -8,7 +8,7 @@
 
 ## Containers used
 
-All containers used in thi study are available on the [Cloud Library](https://cloud.sylabs.io/library/yh549848).
+All containers used in this study are available on the [Cloud Library](https://cloud.sylabs.io/library/yh549848).
 
 <div style="columns: 2;">
 
