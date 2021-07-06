@@ -26,9 +26,9 @@ paths_annotation <- here::here(
     "grch38/annotations/gencode/gencode.v31.long_noncoding_RNAs.gtf",
     "grch38/annotations/gencode/gencode.v31.pc.gtf",
     "grch38/annotations/refseq/GCF_000001405.39_GRCh38.p13_genomic.formatted.gtf",
-    "grch38/annotations/noncode/NONCODEv5_hg38.lncAndGene_formatted.gtf",
+    "grch38/annotations/noncode/NONCODEv5_hg38.lncAndGene_formatted.gtf"
     # "grch37/annotations/fantomcat/FANTOM_CAT.lv3_robust.unnormalized.gtf",
-    "grch37/annotations/mitranscriptome/mitranscriptome.v2.gtf"
+    # "grch37/annotations/mitranscriptome/mitranscriptome.v2.gtf"
   )
 ) %>% set_names(
   c(
@@ -36,9 +36,9 @@ paths_annotation <- here::here(
     "GENCODE-lncRNA",
     "GENCODE-ProteinCoding",
     "RefSeq",
-    "NONCODE",
+    "NONCODE"
     # "FANTOM-CAT",
-    "MiTranscriptome"
+    # "MiTranscriptome"
   )
 )
 
@@ -122,22 +122,19 @@ features <-
 
 ## 3. Load mappability
 ```{r}
-paths_mappabilities <- here::here(
-  "results/mappabilities/100/",
-  c(
-    # "FANTOM_CAT.lv3_robust.FANTOM_CAT.lv3_robust.sqlite",
-    "GCF_000001405.39_GRCh38.p13_lncRNA_transcripts.formatted.GCF_000001405.39_GRCh38.p13_lncRNA_transcripts.formatted.aligned.merged.sqlite",
-    "GCF_000001405.39_GRCh38.p13_pc_transcripts.formatted.GCF_000001405.39_GRCh38.p13_pc_transcripts.formatted.aligned.merged.sqlite",
-    "GCF_000001405.39_GRCh38.p13_transcripts.curated.formatted.GCF_000001405.39_GRCh38.p13_transcripts.curated.formatted.aligned.merged.sqlite",
-    "GCF_000001405.39_GRCh38.p13_transcripts.formatted.GCF_000001405.39_GRCh38.p13_transcripts.formatted.aligned.merged.sqlite",
-    "gencode.v31.basic.transcripts.formatted.gencode.v31.basic.transcripts.formatted.aligned.merged.sqlite",
-    # "gencode.v31.lncRNA_transcripts.formatted.gencode.v31.lncRNA_transcripts.formatted.aligned.merged.sqlite",
-    # "gencode.v31.pc_transcripts.formatted.gencode.v31.pc_transcripts.formatted/gencode.v31.pc_transcripts.formatted.gencode.v31.pc_transcripts.formatted.aligned.merged.sqlite",
-    # "gencode.v31_refseq.v109.20190607.transcripts.formatted.gencode.v31_refseq.v109.20190607.transcripts.formatted.aligned.merged.sqlite",
-    "gencode.v31.transcripts.formatted.gencode.v31.transcripts.formatted.aligned.merged.sqlite",
-    # "mitranscriptome.v2.mitranscriptome.v2.sqlite",
-    "NONCODEv5_human.NONCODEv5_human.aligned.merged.sqlite"
-  )
+paths_mappabilities <- c(
+  # "FANTOM_CAT.lv3_robust.FANTOM_CAT.lv3_robust.sqlite",
+  "GCF_000001405.39_GRCh38.p13_lncRNA_transcripts.formatted.GCF_000001405.39_GRCh38.p13_lncRNA_transcripts.formatted.aligned.merged.sqlite",
+  "GCF_000001405.39_GRCh38.p13_pc_transcripts.formatted.GCF_000001405.39_GRCh38.p13_pc_transcripts.formatted.aligned.merged.sqlite",
+  "GCF_000001405.39_GRCh38.p13_transcripts.curated.formatted.GCF_000001405.39_GRCh38.p13_transcripts.curated.formatted.aligned.merged.sqlite",
+  "GCF_000001405.39_GRCh38.p13_transcripts.formatted.GCF_000001405.39_GRCh38.p13_transcripts.formatted.aligned.merged.sqlite",
+  "gencode.v31.basic.transcripts.formatted.gencode.v31.basic.transcripts.formatted.aligned.merged.sqlite",
+  # "gencode.v31.lncRNA_transcripts.formatted.gencode.v31.lncRNA_transcripts.formatted.aligned.merged.sqlite",
+  # "gencode.v31.pc_transcripts.formatted.gencode.v31.pc_transcripts.formatted/gencode.v31.pc_transcripts.formatted.gencode.v31.pc_transcripts.formatted.aligned.merged.sqlite",
+  # "gencode.v31_refseq.v109.20190607.transcripts.formatted.gencode.v31_refseq.v109.20190607.transcripts.formatted.aligned.merged.sqlite",
+  "gencode.v31.transcripts.formatted.gencode.v31.transcripts.formatted.aligned.merged.sqlite",
+  # "mitranscriptome.v2.mitranscriptome.v2.sqlite",
+  "NONCODEv5_human.NONCODEv5_human.aligned.merged.sqlite"
 ) %>% set_names(
   c(
     # "FANTOM-CAT",
@@ -154,6 +151,16 @@ paths_mappabilities <- here::here(
     "NONCODE"
   )
 )
+
+mappabilities <- data.frame(
+ name = names(paths_mappabilities),
+ path = paths_mappabilities,
+ stringsAsFactors = FALSE
+) %>%
+  crossing(length = c('050', '150')) %>%
+  crossing(feature_type = c("gene", "transcript")) %>%
+  mutate(path = map2_chr(length, path, ~ here::here("results/mappabilities", .x, .y))) %>%
+  unite('name', name, length, sep = ':')
 
 load_mappability <- function(path, name, feature_type) {
   conn <- RSQLite::SQLite() %>% RSQLite::dbConnect(path, synchronous = "off")
@@ -175,9 +182,7 @@ load_mappability <- function(path, name, feature_type) {
   df
 }
 
-mappabilities <- paths_mappabilities %>%
-  enframe(value = "path") %>%
-  crossing(feature_type = c("gene", "transcript")) %>%
+mappabilities <- mappabilities %>%
   mutate(data = pmap(., load_mappability))
 
 .mean_mappability <- function(x) {

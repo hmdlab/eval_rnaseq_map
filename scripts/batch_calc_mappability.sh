@@ -8,7 +8,6 @@
 #$ -S /bin/bash
 #$ -l s_vmem=256G -l mem_req=256G
 #$ -l d_rt=480:00:00 -l s_rt=480:00:00
-#$ -l intel
 #$ -cwd
 #$ -o ./ugelogs/
 #$ -e ./ugelogs/
