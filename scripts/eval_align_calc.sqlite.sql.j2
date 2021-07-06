@@ -1,0 +1,58 @@
+-- Settings
+PRAGMA busy_timeout=864000000;
+PRAGMA cache_size=48000000;
+
+-- Import data
+.mode tabs
+
+drop table if exists alignment_results;
+create table if not exists alignment_results(rowno, id, true_false);
+.import '{{ tsv_aligned }}' alignment_results
+
+drop table if exists unaligned_reads;
+create table if not exists unaligned_reads(id);
+.import '{{ tsv_unaligned }}' unaligned_reads
+
+drop table if exists confusion_matrix;
+create table if not exists confusion_matrix(id, qname, tp, fp, tn, fn, total);
+
+
+-- Calc metrics
+insert into confusion_matrix
+  select
+    id,
+    substr(id, instr(id, '/') + 1, instr(id, ';') -instr(id, '/') -1),
+    sum(case when true_false = 'True' then 1.0 else 0.0 end) as tp,
+    sum(case when true_false = 'False' then 1.0 else 0.0 end) as fp,
+    0.0 as tn, -- NOTE: Do not exists
+    sum(case when true_false = 'None' then 0.0 else 0.0 end) as fn, -- NOTE: Import from unaligned_reads instead
+    cast(count(rowno) as float) as total
+  from alignment_results group by id;
+
+insert into confusion_matrix
+  select
+    id,
+    substr(id, instr(id, '/') + 1, instr(id, ';') -instr(id, '/') -1),
+    0.0 as tp,
+    0.0 as fp,
+    0.0 as fn,
+    1.0 as fn,
+    1.0 as total
+  from unaligned_reads;
+
+drop table if exists metrics;
+create table if not exists metrics(recall, precision, f1);
+insert into metrics
+  select
+    tp / (tp + fn) as recall,
+    tp / (tp + fp) as precision,
+    2 * tp / (2 * tp + fp + fn) as f1
+  from
+  (
+  select
+    sum(tp) as tp,
+    sum(fp) as fp,
+    sum(tn) as tn,
+    sum(fn) as fn
+  from confusion_matrix
+  ) t0;

@@ -1,0 +1,706 @@
+---
+title: "Evaluation of DE analysis results on simulation data (additonal)"
+date: "`r format(Sys.time(), '%Y/%m/%d')`"
+output: html_notebook
+params:
+  output_dir: NULL
+editor_options:
+  chunk_output_type: console
+---
+
+## 0. Load data
+```{r}
+library(tidyverse)
+
+load(here::here("tmp/wip.RData"))
+```
+
+## 1. Additional: Characterization of biotypes
+
+### 1.1 Calculate metrics
+
+#### 1.1.1 Prepares
+```{r}
+biotype_feature_ids <- bind_rows(
+  annotation_main %>%
+    distinct(feature_id, biotype) %>%
+    utl$split_tibble("biotype") %>%
+    map(~ intersect(.$feature_id, feature_ids_expressed)) %>%
+    enframe(name = "biotype", value = "feature_ids"),
+  annotation_main %>%
+    mutate(biotype = "all") %>%
+    distinct(feature_id, biotype) %>%
+    utl$split_tibble("biotype") %>%
+    map(~ intersect(.$feature_id, feature_ids_expressed)) %>%
+    enframe(name = "biotype", value = "feature_ids")
+) %>% mutate(n_features = map_int(feature_ids, length))
+
+.biotype_feature_ids_unnested <- biotype_feature_ids %>%
+  unnest(feature_ids) %>%
+  rename(feature_id = feature_ids)
+
+# NOTE: bin.x for mappability; bin.y for abundance
+mappability_abundance_biotype_feature_ids <- left_join(
+  mappability_abundance_feature_ids1 %>%
+    left_join(.biotype_feature_ids_unnested, by = "feature_id") %>%
+    group_by(bin.x, interval.x, bin.y, interval.y, biotype) %>%
+    nest,
+  mappability_abundance_feature_ids2 %>%
+    left_join(.biotype_feature_ids_unnested, by = "feature_id") %>%
+    group_by(bin.x, interval.x, bin.y, interval.y, biotype) %>%
+    nest,
+  by = c("bin.x", "bin.y", "interval.x", "interval.y", "biotype")
+) %>%
+  mutate(feature_ids1 = map(data.x, ~ pull(.x, feature_id))) %>%
+  mutate(feature_ids2 = map(data.y, ~ pull(.x, feature_id))) %>%
+  select(!starts_with("data")) %>%
+  mutate(n_features1 = map_int(feature_ids1, length)) %>%
+  mutate(n_features2 = map_int(feature_ids2, length)) %>%
+  arrange(bin.x, bin.y, biotype)
+
+abundance_biotype_feature_ids <- left_join(
+  mappability_abundance_feature_ids1 %>%
+    left_join(.biotype_feature_ids_unnested, by = "feature_id") %>%
+    select(-bin.x, -interval.x) %>%
+    group_by(bin.y, interval.y, biotype) %>%
+    nest,
+  mappability_abundance_feature_ids2 %>%
+    left_join(.biotype_feature_ids_unnested, by = "feature_id") %>%
+    select(-bin.x, -interval.x) %>%
+    group_by(bin.y, interval.y, biotype) %>%
+    nest,
+  by = c("bin.y", "interval.y", "biotype")
+) %>%
+  mutate(feature_ids1 = map(data.x, ~ pull(.x, feature_id))) %>%
+  mutate(feature_ids2 = map(data.y, ~ pull(.x, feature_id))) %>%
+  select(!starts_with("data")) %>%
+  mutate(n_features1 = map_int(feature_ids1, length)) %>%
+  mutate(n_features2 = map_int(feature_ids2, length)) %>%
+  arrange(bin.y, biotype)
+
+mappability_mean_abundance_biotype_feature_ids <- mappability_mean_abundance_feature_ids %>%
+  select(bin.x, interval.x, bin.y, interval.y, feature_ids) %>%
+  unnest(feature_ids) %>%
+  rename(feature_id = feature_ids) %>%
+  left_join(.biotype_feature_ids_unnested, by = "feature_id") %>%
+  group_by(bin.x, interval.x, bin.y, interval.y, biotype) %>%
+  nest %>%
+  mutate(feature_ids = map(data, ~ pull(.x, feature_id))) %>%
+  select(!starts_with("data")) %>%
+  mutate(n_features = map_int(feature_ids, length)) %>%
+  arrange(bin.x, bin.y, biotype)
+
+mappability_biotype_feature_ids <- mappability_mean_abundance_biotype_feature_ids %>%
+  ungroup %>%
+  select(-bin.y, -interval.y) %>%
+  unnest(feature_ids) %>%
+  rename(feature_id = feature_ids) %>%
+  group_by(bin.x, interval.x, biotype) %>%
+  nest %>%
+  mutate(feature_ids = map(data, ~ pull(.x, feature_id))) %>%
+  select(!starts_with("data")) %>%
+  mutate(n_features = map_int(feature_ids, length)) %>%
+  arrange(bin.x, biotype)
+
+mean_abundance_biotype_feature_ids <- mappability_mean_abundance_biotype_feature_ids %>%
+  ungroup %>%
+  select(-bin.x, -interval.x) %>%
+  unnest(feature_ids) %>%
+  rename(feature_id = feature_ids) %>%
+  group_by(bin.y, interval.y, biotype) %>%
+  nest %>%
+  mutate(feature_ids = map(data, ~ pull(.x, feature_id))) %>%
+  select(!starts_with("data")) %>%
+  mutate(n_features = map_int(feature_ids, length)) %>%
+  arrange(bin.y, biotype)
+```
+
+#### 1.1.2 For each biotype
+```{r}
+biotype_metrics_align <- results_align_confusion_matrix %>%
+  crossing(biotype_feature_ids) %>%
+  mutate(metrics = map2(
+    data,
+    feature_ids,
+    ~ h.align$calc_metrics(confusion_matrix = .x, feature_ids = .y) %>%
+      pivot_longer(-1, names_to = "metric")
+  )) %>%
+  select(dataset, name, biotype, n_features, metrics)
+
+biotype_metrics_align %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "biotype_metrics_align", "data.tsv", sep = "_"))
+  )
+
+biotype_metrics_quant <- results_quant_est_cpm %>%
+  crossing(biotype_feature_ids) %>%
+  mutate(metrics = map2(
+    data,
+    feature_ids,
+    ~ h.quant$calc_metrics(est = .x, true = result_quant_true_cpm, feature_ids = .y) %>%
+      pivot_longer(cols = everything(), names_to = "metric")
+  )) %>%
+  select(dataset, name, biotype, n_features, metrics)
+
+biotype_metrics_quant %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "biotype_metrics_quant", "data.tsv", sep = "_"))
+  )
+
+biotype_metrics_de <- results_de_est %>%
+  crossing(biotype_feature_ids) %>%
+  mutate(metrics = map2(
+    data,
+    feature_ids,
+    ~ h.de$calc_metrics(est = .x, true = result_de_true, feature_ids = .y) %>%
+      pivot_longer(cols = everything(), names_to = "metric")
+  )) %>%
+  mutate(n_tested = map2_int(
+    data,
+    feature_ids,
+    ~ h.de$counts_n_tested(est = .x, feature_ids = .y)
+  )) %>%
+  select(dataset, name, biotype, n_features, n_tested, metrics)
+
+biotype_metrics_de %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "biotype_metrics_de", "data.tsv", sep = "_"))
+    )
+```
+
+#### 1.1.3 For each biotype - mappability
+```{r}
+mappability_biotype_metrics_align <- results_align_confusion_matrix %>%
+  crossing(mappability_biotype_feature_ids) %>%
+  mutate(metrics = map2(
+    data,
+    feature_ids,
+    ~ h.align$calc_metrics(confusion_matrix = .x, feature_ids = .y) %>%
+      pivot_longer(-1, names_to = "metric")
+  )) %>%
+  select(dataset, name, bin.x, interval.x, biotype, n_features, metrics)
+
+mappability_biotype_metrics_align %>%
+  rename_with(~ gsub(".y", ".abundance", gsub(".x", ".mappability", .x, fixed = TRUE), fixed = TRUE)) %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "mappability_biotype_metrics_align", "data.tsv", sep = "_"))
+  )
+
+.calc_metrics2 <- partial(h.quant$calc_metrics2, true = result_quant_true_cpm)
+
+mappability_abundance_biotype_metrics_quant <- results_quant_est_cpm %>%
+  crossing(filter(mappability_abundance_biotype_feature_ids, !is.na(bin.y))) %>%
+  mutate(metrics = pmap(
+    list(
+      est = data,
+      feature_ids1 = feature_ids1,
+      feature_ids2 = feature_ids2
+    ),
+    .calc_metrics2
+  ) %>% map( ~ .x %>% pivot_longer(cols = everything(), names_to = "metric"))) %>%
+  select(dataset, name, bin.x, interval.x, bin.y, interval.y, biotype, n_features1, n_features2, metrics)
+
+mappability_abundance_biotype_metrics_quant %>%
+  rename_with(~ gsub(".y", ".abundance", gsub(".x", ".mappability", .x, fixed = TRUE), fixed = TRUE)) %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "mappability_abundance_biotype_metrics_quant", "data.tsv", sep = "_"))
+  )
+
+mappability_mean_abundance_biotype_metrics_de <- results_de_est %>%
+  crossing(mappability_mean_abundance_biotype_feature_ids) %>%
+  mutate(metrics = map2(
+    data,
+    feature_ids,
+    ~ h.de$calc_metrics(est = .x, true = result_de_true, feature_ids = .y) %>%
+      pivot_longer(cols = everything(), names_to = "metric")
+  )) %>%
+  mutate(n_tested = map2_int(
+    data,
+    feature_ids,
+    ~ h.de$counts_n_tested(est = .x, feature_ids = .y)
+  )) %>%
+  select(dataset, name, bin.x, interval.x, bin.y, interval.y, biotype, n_features, n_tested, metrics)
+
+mappability_mean_abundance_biotype_metrics_de %>%
+  rename_with(~ gsub(".y", ".abundance", gsub(".x", ".mappability", .x, fixed = TRUE), fixed = TRUE)) %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "mappability_abundance_biotype_metrics_de", "data.tsv", sep = "_"))
+    )
+```
+
+#### 1.1.4 For each abundance - biotype
+```{r}
+.calc_metrics2 <- partial(h.quant$calc_metrics2, true = result_quant_true_cpm)
+
+abundance_biotype_metrics_quant <- results_quant_est_cpm %>%
+  crossing(filter(abundance_biotype_feature_ids, !is.na(bin.y))) %>%
+  mutate(metrics = pmap(
+    list(
+      est = data,
+      feature_ids1 = feature_ids1,
+      feature_ids2 = feature_ids2
+    ),
+    .calc_metrics2
+  ) %>% map( ~ .x %>% pivot_longer(cols = everything(), names_to = "metric"))) %>%
+  select(dataset, name, bin.y, interval.y, biotype, n_features1, n_features2, metrics)
+
+abundance_biotype_metrics_quant %>%
+  rename_with(~ gsub(".y", ".abundance", gsub(".x", ".mappability", .x, fixed = TRUE), fixed = TRUE)) %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "abundance_biotype_metrics_quant", "data.tsv", sep = "_"))
+  )
+
+mean_abundance_biotype_metrics_de <- results_de_est %>%
+  crossing(mean_abundance_biotype_feature_ids) %>%
+  mutate(metrics = map2(
+    data,
+    feature_ids,
+    ~ h.de$calc_metrics(est = .x, true = result_de_true, feature_ids = .y) %>%
+      pivot_longer(cols = everything(), names_to = "metric")
+  )) %>%
+  mutate(n_tested = map2_int(
+    data,
+    feature_ids,
+    ~ h.de$counts_n_tested(est = .x, feature_ids = .y)
+  )) %>%
+  select(dataset, name, bin.y, interval.y, biotype, n_features, n_tested, metrics)
+
+mean_abundance_biotype_metrics_de %>%
+  rename_with(~ gsub(".y", ".abundance", gsub(".x", ".mappability", .x, fixed = TRUE), fixed = TRUE)) %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "abundance_biotype_metrics_de", "data.tsv", sep = "_"))
+    )
+```
+
+### 1.2 Draw plots
+
+#### 1.2.1 Alignment
+```{r}
+.data <- biotype_metrics_align %>%
+  unnest(metrics) %>%
+  group_by(dataset, metric, name, biotype) %>%
+  summarize(mean = mean(value)) %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  mutate(biotype = utl$to_factor(biotype)) %>%
+  group_by(dataset, metric) %>%
+  nest %>%
+  ungroup(dataset)
+
+.draw <- function(data_, metric) {
+  g <- utl$plot_bar(
+    data = data_,
+    group = "abbr",
+    facet.by = NULL,
+    tilt = FALSE,
+    theme_ = NULL,
+    list(
+      x = "biotype",
+      y = "mean",
+      ylim = c(0.925, 1.00),
+      xlab = "",
+      ylab = utl$to_lab(metric),
+      add = "mean"
+    )
+  )
+}
+
+.data$plot <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw)
+
+map2(
+  .data$plot,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "biotype_bar_align.pdf",
+    width = 3.2 * 3.2,
+    height = 3.2 * 3
+  )
+)
+
+utl$rm_private_vars()
+```
+
+#### 1.2.2 Quantification
+
+```{r}
+.data <- biotype_metrics_quant %>%
+  unnest(metrics) %>%
+  group_by(dataset, metric, name, biotype) %>%
+  summarize(mean = mean(value)) %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  mutate(biotype = utl$to_factor(biotype)) %>%
+  group_by(dataset, metric) %>%
+  nest %>%
+  ungroup(dataset)
+
+.draw <- function(data_, metric) {
+  g <- utl$plot_bar(
+    data = data_,
+    group = "abbr",
+    facet.by = NULL,
+    tilt = FALSE,
+    theme_ = NULL,
+    list(
+      x = "biotype",
+      y = "mean",
+      xlab = "",
+      ylab = utl$to_lab(metric)
+    )
+  )
+}
+
+.data$plot <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw)
+
+map2(
+  .data$plot,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "biotype_bar_quant.pdf",
+    width = 3.2 * 3.2,
+    height = 3.2 * 3
+  )
+)
+
+utl$rm_private_vars()
+```
+
+#### 1.2.3 DE
+
+```{r}
+.data <- biotype_metrics_de %>%
+  unnest(metrics) %>%
+  group_by(dataset, metric, name, biotype) %>%
+  summarize(mean = mean(value)) %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  mutate(biotype = utl$to_factor(biotype)) %>%
+  group_by(dataset, metric) %>%
+  nest %>%
+  ungroup(dataset)
+
+.draw <- function(data_, metric) {
+  g <- utl$plot_bar(
+    data = data_,
+    group = "abbr",
+    facet.by = NULL,
+    tilt = FALSE,
+    theme_ = NULL,
+    list(
+      x = "biotype",
+      y = "mean",
+      xlab = "",
+      ylab = utl$to_lab(metric)
+    )
+  )
+}
+
+.data$plot <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw)
+
+map2(
+  .data$plot,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "biotype_bar_de.pdf",
+    width = 3.2 * 3.2,
+    height = 3.2 * 3
+  )
+)
+
+utl$rm_private_vars()
+```
+
+## 2. Additional: The impact of tailoring annotation
+
+### 2.1 Preparations
+
+```{r, setup, include=FALSE, cache=FALSE}
+inputs_tailored <- bind_rows(
+  data.frame(
+    dataset = "sim_add",
+    condition = c(0),
+    input_dir = here::here("results", c("testXX_main_r")),
+    stringsAsFactors = FALSE
+  )
+)
+
+path_annotation <- here::here("assets/references_tailored/annotations/gencode.v31.annotation_expressed.gtf")
+
+annotation_tailored <- utl$load_gtf(path_annotation)
+
+feature_ids_all <- annotation_tailored$transcript_id %>% unique
+```
+
+
+### 2.2 Load results
+
+#### 2.2.2 Quantification
+```{r}
+inputs_quant_tailored <- inputs_tailored %>%
+  mutate(
+    path = map(input_dir, ~ utl$find_paths(.x, h.quant$PATTERNS$transcript) %>% unlist)
+  ) %>%
+  unnest(path) %>%
+  mutate(
+    name = paste(condition, map_chr(path, ~ .x %>% utl$to_combination()), sep = ".")
+  )
+
+inputs_quant_tailored <- inputs_quant_tailored %>%
+  mutate(combination = utl$.combination(name)) %>%
+  filter(grepl('0.gencode-', name)) %>%
+  utl$filter_by_combination()
+
+results_quant_est_tailored <- inputs_quant_tailored %>%
+  mutate(
+    data = map2(
+      path, name,
+      ~ h.quant$load_result(.x) %>% 
+        h.quant$fill_lack(., annotation_tailored)
+    )
+  ) %>%
+  select(-condition, -input_dir, -path)
+
+results_quant_est_cpm_tailored <- results_quant_est_tailored %>%
+  mutate(
+    data = map(data,
+               ~ h.quant$to_cpm(.x) %>%
+                 utl$mean_by_group(prefixes = c("CTRL", "CASE"), ordered = FALSE)
+    )
+  )
+```
+
+#### 2.2.3 DE
+
+```{r}
+inputs_de_tailored <- inputs_tailored %>%
+  mutate(path = map(input_dir, ~ utl$find_paths(.x, h.de$PATTERNS$transcript) %>% unlist)) %>%
+  unnest(path) %>%
+  mutate(name = paste(
+    condition,
+    map_chr(path, ~ .x %>% utl$to_combination()),
+    sep = "."
+  ))
+
+inputs_de_tailored <- inputs_de_tailored %>%
+  mutate(combination = utl$.combination(name)) %>%
+  filter(grepl('0.gencode-', name)) %>%
+  utl$filter_by_combination()
+
+.load_result_de <- function(p, n) {
+  p %>% message
+
+  .f <- get(paste0("load_", utl$tool(n)), envir = h.de)
+  if (utl$tool(n) == "ballgown") .f <- partial(.f, coef = -1)
+
+  .f(p)
+}
+
+results_de_est_tailored <- inputs_de_tailored %>%
+  mutate(
+    data = map2(
+      path, name,
+      ~ .load_result_de(.x, .y) %>%
+        h.de$fill_lack(., annotation_tailored)
+    )
+  ) %>%
+  select(-condition, -input_dir, -path)
+
+utl$rm_private_vars()
+```
+
+### 2.3 Calculate metrics
+```{r}
+metrics_quant_tailored <- results_quant_est_cpm_tailored %>%
+  mutate(metrics = map(
+    data,
+    ~ h.quant$calc_metrics(est = .x, true = result_quant_true_cpm, feature_ids = feature_ids_expressed) %>%
+      pivot_longer(cols = everything(), names_to = "metric")
+  )) %>%
+  mutate(n_features = n_features) %>%
+  select(dataset, name, n_features, metrics)
+
+metrics_quant_tailored %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "metrics_quant_tailored", "data.tsv", sep = "_"))
+  )
+
+metrics_de_tailored <- results_de_est_tailored %>%
+  mutate(metrics = map(
+    data,
+    ~ h.de$calc_metrics(est = .x, true = result_de_true, feature_ids = feature_ids_expressed) %>%
+      pivot_longer(cols = everything(), names_to = "metric")
+  )) %>%
+  mutate(n_features = n_features) %>%
+  mutate(n_tested = map_int(
+    data,
+    ~ h.de$counts_n_tested(est = .x, feature_ids = feature_ids_expressed)
+  )) %>%
+  select(dataset, name, n_features, n_tested, metrics)
+
+metrics_de_tailored %>%
+  unnest(metrics) %>%
+  write_tsv(
+    here::here(output_dir, paste(PREFIX, "metrics_de_tailored", "data.tsv", sep = "_"))
+  )
+```
+
+### 2.4 Draw plots
+
+#### 2.4.1 Quant
+```{r}
+.data <- left_join(
+  metrics_quant %>% select(name, metrics) %>% unnest(metrics),
+  metrics_quant_tailored %>% select(name, metrics) %>% unnest(metrics),
+  by = c("name", "metric")
+) %>%
+  rename(full_set = "value.x") %>%
+  rename(tailored = "value.y") %>%
+  pivot_longer(-(1:2), names_to = "exp") %>%
+  utl$decorate_metrics() %>%
+  mutate(metric = utl$to_lab(metric)) %>%
+  arrange(name, metric) %>%
+  utl$split_tibble("metric")
+
+.draw <- function(data_, group_, facet.by) {
+  theme_ <- theme(
+    text = element_text(size = 18),
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 18),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.border = element_rect(fill = NA, size= 0.5)
+  )
+
+  g <- ggpubr::ggdotchart(
+    data_,
+    x = "abbr",
+    y = "value",
+    group = group_,
+    color = group_,
+    sorting = "none",
+    rotate = TRUE,
+    dot.size = 2,
+    ggtheme = ggpubr::theme_pubr(),
+    y.text.col = TRUE
+  )
+
+  g <- ggpubr::facet(g + ggpubr::theme_cleveland() + theme_, facet.by = facet.by)
+
+  g <- g + theme(panel.border = element_rect(fill = NA, size = 1))
+  g
+}
+
+.plots <- .data %>% map(~ .draw(.x, "exp", "metric"))
+
+.plot_arranged <- ggpubr::ggarrange(
+  plotlist = .plots,
+  ncol = 2,
+  nrow = 1,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+.plot_arranged %>%
+  utl$save_plot("comparison", "quant_full_tailored.pdf",
+                width = 3.2 * 6,
+                height = 3.2 * 3)
+
+utl$rm_private_vars()
+
+```
+
+
+#### 2.4.2 DE
+
+```{r}
+.levels <- c(
+  "hisat2-stringtie-ballgown",
+  "kallisto-sleuth_wt",
+  "tophat2-cuffdiff",
+  "salmon-deseq2",
+  "star-rsem-ebseq"
+)
+
+.data %>% filter(metric == "auc") %>%
+  mutate(delta = tailored - full_set) %>% View
+
+.data <- left_join(
+  metrics_de %>% select(name, metrics) %>% unnest(metrics),
+  metrics_de_tailored %>% select(name, metrics) %>% unnest(metrics),
+  by = c("name", "metric")
+) %>%
+  rename(full_set = "value.x") %>%
+  rename(tailored = "value.y") %>%
+  pivot_longer(-(1:2), names_to = "exp") %>%
+  utl$decorate_metrics() %>%
+  mutate(metric = utl$to_lab(metric)) %>%
+  mutate(combination = factor(combination, levels = .levels)) %>%
+  arrange(combination, name, metric)%>%
+  utl$split_tibble("metric")
+
+.draw <- function(data_, group_, facet.by) {
+  theme_ <- theme(
+    text = element_text(size = 18),
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 18),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.border = element_rect(fill = NA, size= 0.5)
+  )
+
+  g <- ggpubr::ggdotchart(
+    data_,
+    x = "abbr",
+    y = "value",
+    group = group_,
+    color = group_,
+    sorting = "none",
+    rotate = TRUE,
+    dot.size = 2,
+    ggtheme = ggpubr::theme_pubr(),
+    y.text.col = TRUE
+  )
+
+  g <- ggpubr::facet(g + ggpubr::theme_cleveland() + theme_, facet.by = facet.by)
+
+  g <- g + theme(panel.border = element_rect(fill = NA, size = 1))
+  g
+}
+
+.plots <- .data %>% map(~ .draw(.x, "exp", "metric"))
+
+.plot_arranged <- ggpubr::ggarrange(
+  plotlist = .plots,
+  ncol = 3,
+  nrow = 1,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+.plot_arranged %>%
+  utl$save_plot("comparison", "de_full_tailored.pdf",
+                width = 3.2 * 6,
+                height = 3.2 * 3)
+
+utl$rm_private_vars()
+```

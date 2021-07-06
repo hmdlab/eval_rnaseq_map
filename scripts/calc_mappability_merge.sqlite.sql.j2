@@ -1,0 +1,24 @@
+-- Settings
+PRAGMA busy_timeout=864000000;
+PRAGMA cache_size=48000000;
+
+attach database '{{ src_database }}' as ext;
+
+-- Merge
+select 'ext.transcript_alignment_truths', count(*) from ext.transcript_alignment_truths;
+create table if not exists transcript_alignment_truths (id, qname, true, false);
+select 'transcript_alignment_truths;before', count(*) from transcript_alignment_truths;
+insert into transcript_alignment_truths
+select
+  * from ext.transcript_alignment_truths;
+select 'transcript_alignment_truths;after', count(*) from transcript_alignment_truths;
+
+select 'ext.gene_alignment_truths', count(*) from ext.gene_alignment_truths;
+select 'gene_alignment_truths;befor', count(*) from gene_alignment_truths;
+create table if not exists gene_alignment_truths (id, qname, true, false);
+insert into gene_alignment_truths
+select
+  * from ext.gene_alignment_truths;
+select 'gene_alignment_truths;after', count(*) from gene_alignment_truths;
+
+vacuum;

@@ -1,0 +1,58 @@
+-- Settings
+PRAGMA busy_timeout=864000000;
+PRAGMA cache_size=48000000;
+
+-- Import data
+.mode tabs
+drop table if exists alignments;
+create table if not exists alignments(qname, rname);
+.import '{{ tsv_aligned }}' alignments
+
+vacuum;
+
+select 'alignment', count(*) from alignments;
+
+-- Calculate mappability
+attach database '{{ annotation }}' as ext;
+
+drop table if exists annotation_alignments;
+create table if not exists annotation_alignments (id, qname, qgene_id, rname, rgene_id);
+insert into annotation_alignments
+  select
+      al.id,
+      al.qname, an1.gene_id,
+      al.rname, an2.gene_id
+    from
+      (select qname as id, substr(qname, 1, instr(qname, '|') -1) as qname, substr(qname, instr(qname, '|') +1, length(qname)) as pos, rname from alignments) al
+        left join (select distinct transcript_id, gene_id from ext.annotations where feature = 'exon') an1
+          on al.qname = an1.transcript_id
+            left join (select distinct transcript_id, gene_id from ext.annotations where feature = 'exon') an2
+              on al.rname = an2.transcript_id;
+
+drop table if exists transcript_alignment_truths;
+create table if not exists transcript_alignment_truths (id, qname, true, false);
+insert into transcript_alignment_truths
+select
+  id,
+  qname,
+  sum(case when qname = rname then 1 else 0 end) as true,
+  sum(case when qname <> rname then 1 else 0 end) as false
+  from annotation_alignments group by id;
+
+drop table if exists gene_alignment_truths;
+create table if not exists gene_alignment_truths (id, qname, true, false);
+insert into gene_alignment_truths
+select
+  id,
+  qgene_id as qname,
+  sum(case when qgene_id = rgene_id then 1 else 0 end) as true,
+  sum(case when qgene_id <> rgene_id then 1 else 0 end) as false
+  from annotation_alignments group by id;
+
+select 'transcript_alignment_truths', count(*) from transcript_alignment_truths;
+select 'gene_alignment_truths', count(*) from gene_alignment_truths;
+
+-- Drop data tables
+drop table if exists alignments;
+drop table if exists annotation_alignments;
+vacuum;
