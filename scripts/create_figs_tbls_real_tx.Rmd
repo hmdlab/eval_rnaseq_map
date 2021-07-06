@@ -1,0 +1,933 @@
+---
+title: "Evaluation of DE analysis results on real data"
+date: "`r format(Sys.time(), '%Y/%m/%d')`"
+output: html_notebook
+params:
+  output_dir: NULL
+editor_options:
+  chunk_output_type: console
+---
+
+## 1. Preparations
+
+```{r setup, cache=FALSE}
+library(tidyverse)
+
+utl <- new.env(); source(here::here("scripts/utils/base.R"), utl); source(here::here("scripts/utils/plot.R"), utl)
+h.align <- new.env(); source(here::here("scripts/helpers/align_helper.R"), h.align)
+h.quant <- new.env(); source(here::here("scripts/helpers/quant_helper.R"), h.quant)
+h.de <- new.env(); source(here::here("scripts/helpers/de_helper.R"), h.de)
+h.real <- new.env(); source(here::here("scripts/helpers/real_helper.R"), h.real)
+
+PREFIX <- "real"
+
+output_dir <- ifelse(length(params$output_dir) > 0, params$output_dir, "results/figs_tbls")
+
+NUM_BINS = 3
+```
+
+## 2. Load assets
+
+### 2.1 Load annotations
+
+```{r}
+annotations <- utl$load_annotations()
+```
+
+### 2.2 Load qPCR result
+
+```{r}
+qpcr_dir <- here::here("assets/datasets/GSE5350")
+
+refseq2gencode <-
+  file.path(qpcr_dir, "refid2gencode.tsv") %>% data.table::fread(sep = ",", header = TRUE)
+
+result_qpcr_long <- file.path(qpcr_dir, "MAQC_TAQ_merged.txt") %>%
+  h.real$load_qpcr_result() %>%
+  filter(passed) %>%
+  left_join(refseq2gencode, by = "ID") %>%
+  group_by(gene_id, group) %>%
+  summarize(mean(value))
+
+result_qpcr <- data.frame(gene_id =
+                            result_qpcr_long %>%
+                            filter(group %in% c("A", "B")) %>%
+                            pull(gene_id) %>%
+                            na.omit %>%
+                            unique)
+
+result_qpcr <- result_qpcr %>%
+  left_join(result_qpcr_long %>% filter(group == "A"),
+            by = "gene_id") %>%
+  left_join(result_qpcr_long %>% filter(group == "B"),
+            by = "gene_id")
+
+.keep <- result_qpcr %>% select(starts_with("mean")) %>% rowSums %>% map_lgl(is.na) %>% !.
+
+result_qpcr <- result_qpcr[.keep, ] %>%
+  select(gene_id, `mean(value).x`, `mean(value).y`) %>%
+  rename(ctrl = `mean(value).x`) %>%
+  rename(case = `mean(value).y`) %>%
+  rename(feature_id = gene_id)
+
+result_qpcr$mean <- map2_dbl(result_qpcr$ctrl, result_qpcr$case, mean)
+result_qpcr$logfc <- log2(result_qpcr$case / result_qpcr$ctrl)
+```
+
+### 2.3 Find files
+
+```{r}
+.names <- function(p) {
+  paste(
+    names(p) %>% strsplit("\\.") %>% sapply("[", 1),
+    p %>% map_chr( ~ .x %>% utl$to_combination()),
+    sep = "."
+  )
+}
+
+.exclude <- function(p) {
+  .keep <- names(p) %>%
+    grepl("gencode_basic", .) %>% !.
+
+  .keep <- .keep &
+    names(p) %>%
+    grepl("gencode_refseq", .) %>% !.
+
+  .keep <- .keep &
+    (
+      names(p) %>%
+        grepl("tophat2-cuffdiff", .) |
+        names(p) %>%
+        grepl("hisat2-stringtie-ballgown", .) |
+        names(p) %>%
+        grepl("star-rsem-ebseq", .) |
+        names(p) %>%
+        grepl("kallisto-sleuth", .) |
+        names(p) %>%
+        grepl("salmon-deseq2", .)
+    )
+
+  p[.keep]
+}
+
+# NOTE: For real comparison (subsampled)
+input_dirs_sub <-
+  here::here("results", c("05_00_sub", "05_01_sub", "05_02_sub"))
+
+names(input_dirs_sub) <- c("00", "01", "02")
+
+paths_de_real_sub <-
+  input_dirs_sub %>% lapply(utl$find_paths, h.de$PATTERNS$transcript) %>% unlist
+
+names(paths_de_real_sub) <- .names(paths_de_real_sub)
+
+paths_de_real_sub <- paths_de_real_sub %>% .exclude
+
+# NOTE: For mock comparison (MAQCA)
+input_dirs_maqca <-
+  here::here("results",
+             c("04_00_maqca_mock", "04_01_maqca_mock", "04_02_maqca_mock"))
+
+names(input_dirs_maqca) <- c("00", "01", "02")
+
+paths_de_real_maqca <-
+  input_dirs_maqca %>% lapply(utl$find_paths, h.de$PATTERNS$transcript) %>% unlist
+
+names(paths_de_real_maqca) <- .names(paths_de_real_maqca)
+
+paths_de_real_maqca <- paths_de_real_maqca %>% .exclude
+
+# NOTE: For mock comparison (MAQCB)
+input_dirs_maqcb <-
+  here::here("results",
+             c("06_00_maqcb_mock", "06_01_maqcb_mock", "06_02_maqcb_mock"))
+
+names(input_dirs_maqcb) <- c("00", "01", "02")
+
+paths_de_real_maqcb <-
+  input_dirs_maqcb %>% lapply(utl$find_paths, h.de$PATTERNS$transcript) %>% unlist
+
+names(paths_de_real_maqcb) <- .names(paths_de_real_maqcb)
+
+paths_de_real_maqcb <- paths_de_real_maqcb %>% .exclude
+
+# NOTE: For comparison to qpcr result
+input_dirs_all <- here::here("results", c("03_merge_ercc_frrf"))
+names(input_dirs_all) <- c("00")
+
+paths_de_real_all_tx <-
+  input_dirs_all %>% lapply(utl$find_paths, h.de$PATTERNS$transcript) %>% unlist
+
+names(paths_de_real_all_tx) <- .names(paths_de_real_all_tx)
+
+paths_de_real_all_tx <- paths_de_real_all_tx %>% .exclude
+
+paths_de_real_all_gene <-
+  input_dirs_all %>% lapply(utl$find_paths, h.de$PATTERNS$gene) %>% unlist
+
+names(paths_de_real_all_gene) <- .names(paths_de_real_all_gene)
+
+paths_de_real_all_gene <- paths_de_real_all_gene %>% .exclude
+
+# NOTE: For comparison to simulation
+input_dirs_sim <- here::here("results", c("test01_main"))
+names(input_dirs_sim) <- c("00")
+
+paths_de_sim_all_gene <-
+  input_dirs_sim %>% lapply(utl$find_paths, h.de$PATTERNS$gene) %>% unlist
+
+names(paths_de_sim_all_gene) <- .names(paths_de_sim_all_gene)
+
+paths_de_sim_all_gene <- paths_de_sim_all_gene %>% .exclude
+
+utl$rm_private_vars()
+```
+
+### 2.4 Load DE results
+
+```{r}
+results_de_real_sub <- paths_de_real_sub %>% h.real$load_results()
+
+results_de_real_maqca <- paths_de_real_maqca %>% h.real$load_results()
+
+results_de_real_maqcb <- paths_de_real_maqca %>% h.real$load_results()
+
+results_de_real_all_tx <-
+  paths_de_real_all_tx %>% h.real$load_results()
+
+results_de_real_all_gene <-
+  paths_de_real_all_gene %>% h.real$load_results()
+
+results_de_sim_all_gene <-
+  paths_de_sim_all_gene %>% h.real$load_results()
+```
+
+## 3. Impact of mappability and abundance
+
+### 3.1 Calculate metrics
+
+```{r}
+annotation_main <- annotations$gencode
+
+path_annotation <- here::here("share/assets/references/grch38/annotations/gencode/gencode.v31.annotation.gtf")
+
+transcript_lengths <- path_annotation %>%
+  utl$load_gtf(types = c("exon")) %>%
+  group_by(transcript_id) %>%
+  summarise(length = sum(end - start + 1)) %>%
+  data.frame
+
+# FIXME: Gene-level biotype
+features <- bind_rows(
+  annotation_main %>%
+    distinct(transcript_id, transcript_name, biotype) %>%
+    set_names(c("feature_id", "feature_name", "biotype")),
+  annotation_main %>%
+    distinct(gene_id, gene_name, gene_type) %>%
+    set_names(c("feature_id", "feature_name", "biotype"))
+)
+
+paths_mappability <- here::here(
+  "results/mappabilities/100",
+  c(
+    "gencode.v31.transcripts.formatted.gencode.v31.transcripts.formatted.aligned.merged.sqlite"
+  )
+) %>% set_names(c("gencode"))
+
+load_mappability <- function(path, features, feature_type) {
+  conn <- RSQLite::SQLite() %>% RSQLite::dbConnect(path, synchronous = "off")
+
+  df <- RSQLite::dbGetQuery(conn, paste0("select * from ", feature_type, "_mappabilities;")) %>%
+    set_names(c("feature_id", "mappability")) %>%
+    left_join(features, by = "feature_id")
+
+  RSQLite::dbDisconnect(conn)
+
+  df
+}
+
+feature_types <- c("gene", "transcript")
+
+mappabilities <- paths_mappability %>%
+  enframe(value = "path") %>%
+  crossing(feature_type = feature_types) %>%
+  mutate(data = map2(path, feature_type, ~ load_mappability(.x, features = features, .y)))
+
+mappabilities1_gene <- mappabilities %>%
+  filter(name == "gencode") %>%
+  filter(feature_type == "gene") %>%
+  unnest(data) %>%
+  filter(mappability == 1) %>%
+  group_by(name, path, feature_type) %>%
+  nest
+
+mappabilities_gene <- mappabilities %>%
+  filter(name == "gencode") %>%
+  filter(feature_type == "gene") %>%
+  unnest(data) %>%
+  filter(mappability != 1) %>%
+  group_by(name, path, feature_type) %>%
+  nest
+
+mappability_gene_ids <- mappabilities_gene %>%
+  filter(name == "gencode") %>%
+  filter(feature_type == "gene") %>%
+  unnest(data) %>%
+  filter(feature_id %in% pull(!!result_qpcr, "feature_id")) %>%
+  utl$set_bin("mappability", num_bins = NUM_BINS, exclude = FALSE) %>%
+  ungroup %>%
+  select(feature_id, bin) %>%
+  group_by(bin) %>%
+  nest %>%
+  ungroup %>%
+  mutate(feature_ids = map(data, ~ pull(.x, feature_id))) %>%
+  select(-data) %>%
+  mutate(n_features = map_int(feature_ids, length)) %>%
+  arrange(bin)
+
+# NOTE: when num_bins == 3, rename factor
+if (NUM_BINS == 3) {
+  mappability_gene_ids <- mappability_gene_ids %>%
+    mutate(interval = bin)
+  levels(mappability_gene_ids$bin) <- c("Low", "Middle", "High")
+} else {
+  mappability_gene_ids <- mappability_gene_ids %>%
+    mutate(interval = NA)
+}
+
+# NOTE: bin = NA is mappability == 1 group
+mappability_gene_ids %>%
+  select(-feature_ids) %>%
+  write_tsv(here::here(output_dir, paste(PREFIX, "mappability_feature_ids", "data.tsv", sep = "_")))
+
+mappability_gene_ids <- mappability_gene_ids %>%
+  bind_rows(
+    tibble(
+      bin = NA,
+      feature_id = mappabilities1_gene %>%
+        unnest(data) %>%
+        filter(name == "gencode") %>%
+        filter(feature_type == "gene") %>%
+        filter(feature_id %in% pull(!!result_qpcr, "feature_id")) %>%
+        pull(feature_id)
+    ) %>%
+      group_by(bin) %>%
+      nest %>%
+      mutate(feature_ids = map(data, ~ pull(.x, feature_id))) %>%
+      select(-data) %>%
+      mutate(n_features = map_int(feature_ids, length)) %>%
+      arrange(bin)
+  )
+
+mean_abundance_feature_ids <- result_qpcr %>%
+  select(feature_id, mean) %>%
+  utl$set_bin("mean", num_bins = NUM_BINS, exclude = FALSE) %>%
+  select(bin, feature_id) %>%
+  group_by(bin) %>%
+  nest %>%
+  ungroup %>%
+  mutate(feature_ids = map(data, ~ pull(.x, feature_id))) %>%
+  select(-data) %>%
+  mutate(n_features = map_int(feature_ids, length)) %>%
+  arrange(bin)
+
+# NOTE: when num_bins == 3, rename factor
+if (NUM_BINS == 3) {
+  mean_abundance_feature_ids <- mean_abundance_feature_ids %>%
+    mutate(interval = bin)
+  levels(mean_abundance_feature_ids$bin) <- c("Low", "Middle", "High")
+} else {
+  mean_abundance_feature_ids <- mean_abundance_feature_ids %>%
+    mutate(interval = NA)
+}
+
+mean_abundance_feature_ids %>%
+  select(-feature_ids) %>%
+  write_tsv(here::here(output_dir, paste(PREFIX, "mean_abundance_feature_ids", "data.tsv", sep = "_")))
+
+mappability_mean_abundance_feature_ids <- left_join(
+  mappability_gene_ids %>%
+    unnest(feature_ids),
+  mean_abundance_feature_ids %>%
+    unnest(feature_ids),
+  by = "feature_ids") %>%
+  rename(feature_id = "feature_ids") %>%
+  relocate(feature_id) %>%
+  arrange(bin.x, bin.y)
+
+mappability_mean_abundance_feature_ids <- mappability_mean_abundance_feature_ids %>%
+  group_by(bin.x, interval.x, bin.y, interval.y) %>%
+  nest %>%
+  mutate(feature_ids = map(
+    data,
+    ~ pull(.x, feature_id)
+  )) %>%
+  select(-data)
+
+mappability_abundance_metrics_real_all_gene <- results_de_real_all_gene$de %>%
+  enframe(value = "data") %>%
+  filter(!grepl("sleuth", name)) %>%
+  crossing(mappability_mean_abundance_feature_ids) %>%
+  mutate(spearman = map2_dbl(
+    data,
+    feature_ids,
+    ~ h.de$calc_spearman(est = .x, true = result_qpcr, feature_ids = .y)
+  )) %>%
+  mutate(nrmse = map2_dbl(
+    data,
+    feature_ids,
+    ~ h.de$calc_nrmse(est = .x, true = result_qpcr, feature_ids = .y)
+  )) %>%
+  mutate(dataset = "real_main") %>%
+  mutate(n_features = map_int(feature_ids, length)) %>%
+  mutate(n_tested = map2_int(
+    data,
+    feature_ids,
+    ~ h.de$counts_n_tested(est = .x, feature_ids = .y)
+  )) %>%
+  select(dataset, name, bin.x, interval.x, bin.y, interval.y, n_features, n_tested, spearman, nrmse) %>%
+  arrange(bin.x, bin.y) %>%
+  pivot_longer(-(1:8), names_to = "metric")
+
+mappability_abundance_metrics_real_all_gene %>%
+  write_tsv(here::here(output_dir, paste(PREFIX, "mappability_abundance_metrics_real_all_gene", "data.tsv", sep = "_")))
+
+```
+
+### 3.2 Draw plots (line)
+
+```{r}
+.data <- mappability_abundance_metrics_real_all_gene %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  filter(!is.na(bin.x)) %>%
+  mutate(label_bin.y = fct_relabel(bin.y, ~ paste0("qRT-PCR abundance: ", .x))) %>%
+  mutate(`Intervals of gene mappability:` = factor(paste0(bin.x, "; ", interval.x))) %>%
+  mutate(`Intervals of qRT-PCR abundance:` = factor(paste0(bin.y, "; ", interval.y))) %>%
+  group_by(metric) %>%
+  nest
+
+.draw <- function(data_, metric) {
+  g <- utl$plot_line(
+    data = data_,
+    group = "abbr",
+    facet.by = c("label_bin.y"),
+    tilt = FALSE,
+    theme_ = NULL,
+    list(
+      x = "bin.x",
+      y = "value",
+      xlab = "Gene mappability",
+      ylab = utl$to_lab(metric)
+    )
+  )
+}
+
+.data$plot <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw)
+
+get_legend_intervals <- function(data_, var) {
+  n_fills <- data_[[var]] %>% unique %>% length
+
+  g <- ggpubr::ggbarplot(data_, "bin.x", "bin.y", fill = var)
+  g <- g + scale_fill_manual(values = rep("white", n_fills))
+  g <- g + theme(
+    legend.key = element_blank(),
+    legend.key.size = unit(0, "pt")
+  )
+
+  g
+
+  ggpubr::get_legend(g)
+}
+
+.data$legend1 <- .data %>%
+  ungroup %>%
+  select(data) %>%
+  mutate(var = "Intervals of gene mappability:") %>%
+  pmap(get_legend_intervals)
+
+.data$legend2 <- .data %>%
+  ungroup %>%
+  select(data) %>%
+  mutate(var = "Intervals of qRT-PCR abundance:") %>%
+  pmap(get_legend_intervals)
+
+legend_intervals1 <- .data$legend1[[1]]
+legend_intervals2 <- .data$legend2[[1]]
+
+map2(
+  .data$plot,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "mappability_abundance_line_de.pdf",
+    width = 3.2 * 4.2,
+    height = 3.2 * 4
+  )
+)
+
+plots_log2fc <- .data %>% select(metric, plot) %>% deframe
+
+utl$rm_private_vars()
+```
+
+### 3.3 Draw plots (mappability == 1, line)
+```{r}
+.data <- mappability_abundance_metrics_real_all_gene %>%
+  utl$decorate_metrics() %>%
+  utl$filter_by_combination("main") %>%
+  filter(is.na(bin.x)) %>%
+  mutate(label_bin.y = fct_relabel(bin.y, ~ paste0("qRT-PCR abundance: ", .x))) %>%
+  mutate(`Intervals of gene mappability:` = factor(paste0(bin.x, "; ", interval.x))) %>%
+  mutate(`Intervals of qRT-PCR abundance:` = factor(paste0(bin.y, "; ", interval.y))) %>%
+  group_by(metric) %>%
+  nest
+
+.draw <- function(data_, metric) {
+  g <- utl$plot_line(
+    data = data_,
+    group = "abbr",
+    facet.by = NULL,
+    tilt = FALSE,
+    theme_ = NULL,
+    list(
+      x = "bin.y",
+      y = "value",
+      xlab = "qRT-PCR abundance",
+      ylab = utl$to_lab(metric)
+    )
+  )
+}
+
+.data$plot <- .data %>%
+  select(data, metric) %>%
+  pmap(.draw)
+
+map2(
+  .data$plot,
+  .data$metric,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "mappability1_abundance_line_de.pdf",
+    width = 3.2 * 4.2,
+    height = 3.2 * 4
+  )
+)
+
+utl$rm_private_vars()
+```
+
+## 4. Distribution of mappability and abundance
+
+### 4.1. Draw plots (distribution)
+
+```{r}
+.mappabilities_abundances <- result_qpcr %>%
+  select(feature_id, mean) %>%
+  left_join(
+    bind_rows(
+      mappabilities_gene %>% .$data %>% .[[1]],
+      mappabilities1_gene %>% .$data %>% .[[1]]
+    ),
+    by = "feature_id"
+  ) %>%
+  filter(!is.na(feature_id))
+
+.theme <- theme(
+  text = element_text(size = 18),
+  legend.position = "bottom",
+  legend.title = element_blank(),
+  legend.text = element_text(size = 16),
+  strip.text.x = element_text(size = 16)
+)
+
+.plot_main <- .mappabilities_abundances %>%
+  filter(feature_id %in% pull(!!result_qpcr, "feature_id")) %>%
+  mutate(log2mean = log2(mean * 100)) %>%
+  mutate(biotype = utl$to_lab(biotype)) %>%
+  filter(biotype %in% c("mRNA", "lncRNA")) %>%
+  utl$plot_scatter_(
+    group_ = "biotype",
+    lims = NULL,
+    tilt = FALSE,
+    facet.by = NULL,
+    theme_ = NULL,
+    list(
+      x = "mappability",
+      y = "log2mean",
+      xlab = "Gene mappability",
+      ylab = "log2 fold change mesured by qRT-PCR",
+      alpha = 0.5
+    )
+  ) + scale_colour_manual(values = c(mRNA = "#00AFBB", lncRNA = "#E7B800")) + scale_fill_manual(values = c(mRNA = "#00AFBB", lncRNA = "#E7B800")) + guides(colour = guide_legend(override.aes = list(alpha = 1))) + .theme
+
+.draw <- function(data_, x, labs) {
+  .theme <- theme(
+    text = element_text(size = 18),
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 18)
+  )
+
+  g <- data_ %>%
+    mutate(log2mean = log2(mean * 100)) %>%
+    mutate(biotype = utl$to_lab(biotype)) %>%
+    filter(biotype %in% c("mRNA", "lncRNA")) %>%
+    ggpubr::gghistogram(
+      x = x,
+      bins = 100,
+      rug = FALSE,
+      color = "biotype",
+      fill = "biotype",
+      alpha = 0.125,
+      xlab = labs[[1]],
+      ylab = labs[[2]],
+      add = "mean"
+      # facet.by = "sample"
+    )
+  g <- g + .theme
+  g <-
+    g + scale_colour_manual(values = c(mRNA = "#00AFBB", lncRNA = "#E7B800"))
+  g <-
+    g + scale_fill_manual(values = c(mRNA = "#00AFBB", lncRNA = "#E7B800"))
+
+  g
+}
+
+.plot_top <- .mappabilities_abundances %>%
+  .draw("mappability", c("Gene mappability", "Frequency"))
+
+.plot_right <- .mappabilities_abundances %>%
+  .draw("log2mean", c("Log2 fold change measured by qPCR", "Frequency"))
+
+.legend <- ggpubr::get_legend(.plot_top)
+
+.arrange <- function(main, top, right) {
+  .theme1 <- theme(
+    text = element_text(size = 18),
+    axis.text.x = element_blank(),
+    axis.text.y = element_text(size = 16),
+    plot.margin= unit(c(1, 0, 1, 0), "lines"),
+    legend.title = element_blank(),
+  )
+  .theme2 <- theme(
+    text = element_text(size = 18),
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_blank(),
+    axis.title.y = element_blank(),
+    strip.text = element_blank(),
+    plot.margin = unit(c(0, 0, 0, 0), "lines"),
+    legend.title = element_blank(),
+  )
+
+  .top <- top + theme_bw() + .theme1 + ggpubr::rremove("legend") + ggpubr::rremove("x.text") + ggpubr::rremove("x.ticks") + ggpubr::rremove("xlab")
+  .right <- right + theme_bw() + .theme2 + ggpubr::rotate() + ggpubr::rremove("legend") + ggpubr::rremove("y.text") + ggpubr::rremove("ylab") + ggpubr::rremove("y.ticks")
+  .main <- main + theme(plot.margin= unit(c(0, 0, 0, 0), "lines"))
+  g <- ggpubr::ggarrange(
+    plotlist = list(.top, NULL, .main, .right),
+    ncol = 2, nrow = 2, align = "hv", hjust = 2, vjust = 3,
+    widths = c(3, 1), heights = c(1, 3),
+    common.legend = FALSE, legend = "none"
+  )
+
+  g
+}
+
+.plot_arrangeed <- .arrange(.plot_main, .plot_top, .plot_right) + theme(plot.background = element_rect(fill = "white"))
+.plot_arrangeed <- .plot_arrangeed %>% ggpubr::annotate_figure(bottom = .legend)
+
+.plot_arrangeed %>%
+  utl$save_plot(
+    "dist",
+    "mappability_abundance_hist.pdf",
+    width = 3.2 * 4.2,
+    height = 3.2 * 4
+  )
+
+utl$rm_private_vars()
+```
+
+## 5. Number of DEs (with regular and mock comparison)
+
+### 5.1 All
+
+```{r}
+.n_features <- annotation_main %>%
+  pull(feature_id) %>%
+  unique %>%
+  length
+
+.n_sigs_real_sub <- results_de_real_sub$sig %>%
+  enframe(value = "data") %>%
+  mutate(comparision = "maqca_maqcb") %>%
+  mutate(n_de = map_int(data, nrow)) %>%
+  select(-data)
+
+.n_sigs_real_maqca <- results_de_real_maqca$sig %>%
+  enframe(value = "data") %>%
+  mutate(comparision = "maqca_maqca") %>%
+  mutate(n_de = map_int(data, nrow)) %>%
+  select(-data)
+
+.n_sigs_real_maqcb <- results_de_real_maqcb$sig %>%
+  enframe(value = "data") %>%
+  mutate(comparision = "maqcb_maqcb") %>%
+  mutate(n_de = map_int(data, nrow)) %>%
+  select(-data)
+
+.n_tested <- results_de_real_sub$de %>% map(nrow) %>% enframe %>% unnest(value) %>% rename(n_tested = "value")
+
+.data <- bind_rows(.n_sigs_real_sub,
+                   .n_sigs_real_maqca,
+                   .n_sigs_real_maqcb) %>%
+  mutate(replicate = strsplit(name, "\\.") %>% sapply("[", 1) %>% as.numeric) %>%
+  mutate(n_features = .n_features) %>%
+  left_join(.n_tested, by = "name") %>%
+  utl$decorate_metrics() %>%
+  group_by(comparision) %>%
+  nest %>%
+  mutate(title =
+           factor(
+             comparision,
+             labels = c(
+               "MAQC-A vs. MAQC-B",
+               "MAQC-A vs. MAQC-A",
+               "MAQC-B vs. MAQC-B"
+             ),
+             levels = c("maqca_maqcb", "maqca_maqca", "maqcb_maqcb")
+           ))
+
+.data %>%
+  unnest(data) %>%
+  select(comparision, name, abbr, replicate, n_features, n_tested, n_de) %>%
+  mutate(dataset = "real_main") %>%
+  arrange(comparision, abbr, name) %>%
+  write_tsv(here::here(output_dir, paste(PREFIX, "n_de_comparision_all", "data.tsv", sep = "_")))
+
+.draw <- function(data_, title_) {
+  g <- data_ %>% utl$plot_box(
+    group_ = "abbr",
+    tilt = FALSE,
+    facet.by = NULL,
+    theme_ = NULL,
+    list(
+      x = "abbr",
+      y = "n_de",
+      xlab = "",
+      ylab = "Number of DEs",
+      title = title_
+    )
+  )
+
+  g
+}
+
+.data <- .data %>%
+  mutate(plot = map2(data, title,
+                     ~ .draw(.x, .y)))
+
+.plotlist <- .data %>%
+  select(comparision, plot) %>%
+  deframe
+
+.plots_arranged <- ggpubr::ggarrange(
+  .plotlist$mock_maqca,
+  .plotlist$true,
+  nrow = 2,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+.plots_arranged %>%
+  utl$save_plot("real",
+                "comparisions_de.pdf",
+                width = 3.2 * 4.2,
+                height = 3.2 * 4)
+
+utl$rm_private_vars()
+```
+
+### 5.2 Impact of mappability
+```{r}
+.n_sigs_real_sub <- results_de_real_sub$sig %>%
+  enframe(value = "data") %>%
+  mutate(comparision = "maqca_maqcb")
+
+.n_sigs_real_maqca <- results_de_real_maqca$sig %>%
+  enframe(value = "data") %>%
+  mutate(comparision = "maqca_maqca")
+
+.n_sigs_real_maqcb <- results_de_real_maqcb$sig %>%
+  enframe(value = "data") %>%
+  mutate(comparision = "maqcb_maqcb")
+
+mappabilities_tx <- mappabilities %>%
+  filter(name == "gencode") %>%
+  filter(feature_type == "transcript") %>%
+  ungroup %>%
+  select(-name, -path, feature_type) %>%
+  unnest(data) %>%
+  utl$set_bin("mappability", num_bins = NUM_BINS, exclude = FALSE)
+
+mappabilities_tx <- mappabilities_tx %>%
+  group_by(bin) %>%
+  nest %>%
+  mutate(n_features = map_int(data, nrow)) %>%
+  unnest(data)
+
+if (NUM_BINS == 3) {
+  mappabilities_tx <- mappabilities_tx %>%
+    mutate(interval = bin)
+  levels(mappabilities_tx$bin) <- c("Low", "Middle", "High")
+} else {
+  mappabilities_tx <- mappabilities_tx %>%
+    mutate(interval = NA)
+}
+
+.n_tested <- results_de_real_sub$de %>%
+  enframe %>%
+  unnest(value) %>%
+  select(name, feature_id) %>%
+  left_join(select(mappabilities_tx, feature_id, bin), by = "feature_id") %>%
+  group_by(name, bin) %>%
+  summarize(n_tested = n())
+
+.data <- bind_rows(.n_sigs_real_sub,
+                   .n_sigs_real_maqca,
+                   .n_sigs_real_maqcb)
+
+.names <- .data %>% pull(name) %>% unique
+.comparisions <- .data %>% pull(comparision) %>% unique
+
+.data <- .data %>%
+  unnest(data) %>%
+  left_join(select(mappabilities_tx, feature_id, bin), by = "feature_id") %>%
+  group_by(name, comparision, bin) %>%
+  nest %>%
+  mutate(replicate = strsplit(name, "\\.") %>% sapply("[", 1) %>% as.numeric) %>%
+  mutate(n_de = map_int(data, nrow)) %>%
+  group_by(comparision, bin, name, n_de) %>%
+  nest
+
+# NOTE: Filter out ERCC spike-ins
+.data <- .data %>% filter(!is.na(bin))
+
+.bins <- .data %>% pull(bin) %>% unique
+
+.data <- crossing(name = .names,
+                  bin = .bins,
+                  comparision = .comparisions) %>%
+  left_join(.data, by = c("name", "bin", "comparision")) %>%
+  left_join(distinct(mappabilities_tx, bin, interval, n_features), by = "bin") %>%
+  left_join(.n_tested, by = c("name", "bin"))
+
+.data <- .data %>% mutate(n_de = ifelse(is.na(n_de), 0, n_de))
+
+.data <- .data %>%
+  group_by(comparision, bin, interval, n_features, n_tested, name, n_de) %>%
+  nest %>%
+  utl$decorate_metrics() %>%
+  select(-data) %>%
+  group_by(comparision) %>%
+  nest %>%
+  mutate(title =
+           factor(
+             comparision,
+             labels = c(
+               "MAQC-A vs. MAQC-B",
+               "MAQC-A vs. MAQC-A",
+               "MAQC-B vs. MAQC-B"
+             ),
+             levels = c("maqca_maqcb", "maqca_maqca", "maqcb_maqcb")
+           ))
+
+.data %>%
+  unnest(data) %>%
+  select(comparision, name, abbr, bin, interval, n_features, n_tested, n_de) %>%
+  mutate(dataset = "real_main") %>%
+  relocate(dataset) %>%
+  arrange(comparision, abbr, name) %>%
+  write_tsv(here::here(output_dir, paste(PREFIX, "n_de_comparision_mappability", "data.tsv", sep = "_")))
+
+.draw <- function(data_, title_) {
+  .data <- data_ %>% filter(!is.na(bin))
+  g <- utl$plot_line(
+    data = .data,
+    group = "abbr",
+    facet.by = NULL,
+    tilt = FALSE,
+    theme_ = NULL,
+    list(
+      x = "bin",
+      y = "n_de",
+      xlab = "Transcript mappability",
+      ylab = "Number of DEs",
+      title = title_,
+      add = "mean"
+    )
+  )
+}
+
+.data <- .data %>%
+  mutate(plot = map2(data, title,
+                     ~ .draw(.x, .y)))
+
+map2(
+  .data$plot,
+  .data$comparision,
+  ~ .x %>% utl$save_plot(
+    .y,
+    "mappability_fdr_de.pdf",
+    width = 3.2 * 4.2,
+    height = 3.2 * 4
+  )
+)
+
+plots_fdr <- .data %>% select(comparision, plot) %>% deframe
+
+utl$rm_private_vars()
+```
+
+## 6. Arrange plots
+```{r}
+.legend <- ggpubr::get_legend(plots_fdr$maqca_maqcb)
+
+.plotlist <- list(plots_fdr$maqca_maqcb,
+                  plots_fdr$maqca_maqca) %>%
+  map(~ utl$rm_legend(.x))
+
+.plotlist <- map2(.plotlist,
+                  paste0("(", LETTERS, ")")[2:(length(.plotlist) + 1)],
+                  ~ utl$add_lab(.x, .y))
+
+.plots_arranged <- ggpubr::ggarrange(
+  plotlist = .plotlist,
+  nrow = 1,
+  ncol = 2,
+  legend = "none"
+)
+
+.plotlist <- list(utl$add_lab(utl$rm_legend(plots_log2fc$spearman), "(A)"),
+                  .plots_arranged)
+
+.plots_arranged <- ggpubr::ggarrange(
+  plotlist = .plotlist,
+  nrow = 2,
+  ncol = 1,
+  legend = "none"
+) %>%
+  ggpubr::annotate_figure(bottom = .legend)
+  # UNUSED: hide intervals
+  # ggpubr::annotate_figure(bottom = legend_intervals1) %>%
+  # ggpubr::annotate_figure(bottom = legend_intervals2)
+
+.plots_arranged %>%
+  utl$save_plot("spearman_fdr",
+                "mappability_de.pdf",
+                width = 3.2 * 3.2,
+                height = 3.2 * 3.2)
+
+utl$rm_private_vars()
+```
