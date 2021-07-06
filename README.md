@@ -1,4 +1,4 @@
-# Project: The impact of human gene annotation complexity on differential gene expression analysis for lncRNA study
+# Project: Impact of human gene annotations on RNA-seq differential expression analysis
 
 ## Scripts used
 
@@ -7,6 +7,8 @@
 
 
 ## Containers used
+
+All containers used in thi study are available on the [Cloud Library](https://cloud.sylabs.io/library/yh549848).
 
 <div style="columns: 2;">
 
@@ -18,6 +20,7 @@
 - Cufflinks
 - Kallisto
 - Sleuth
-- [rstudio-rnaseqde](https://singularity-hub.org/collections/4866)
+- Salmon
+- rstudio-rnaseqde
 
 </div>
