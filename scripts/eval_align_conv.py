@@ -7,13 +7,13 @@
 Evaluation alignment: conversion
 
 Usage:
-  eval_align.py [options] <gtf> <bam>
+  eval_align_conv.py [options] <gtf> <bam>
 
 Options:
-  --strandedness TYPE : none/rf/fr [default: none]
-  --threads NUM       : Number of threds [default: 1]
-  <gtf>               : GTF formatted gene annotation file
-  <bam>               : BAM (sorted) formatted alignment file
+  --strandedness TYPE  : none/rf/fr [default: none]
+  --threads NUM        : Number of threds [default: 1]
+  <gtf>                : GTF formatted gene annotation file
+  <bam>                : BAM (sorted) formatted alignment file
 
 """
 

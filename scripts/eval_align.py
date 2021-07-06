@@ -10,13 +10,16 @@
 Evaluation alignment
 
 Usage:
-    eval_align_result.py calc [options] <aligned_tsv>
-    eval_align_result.py agg [options] <result_sqlite>...
+    eval_align.py calc [options] <aligned_tsv>
+    eval_align.py agg [options] <result_sqlite>...
 
 Options:
-    --template-dir <PATAH>  : Template file (required run on qsub)
-    <aligned_tsv>           : Aligned work TSV file
-    <result_sqlite>...      : Caluculated result SQLite file(s)
+    --template-dir <PATH>  : Template file (required run on qsub)
+    <aligned_tsv>          : Aligned work TSV file
+    <result_sqlite>...     : Caluculated result SQLite file(s)
+
+Note:
+    Convert unmapped.bam to FASTQ before executing eval_align calc.
 
 """
 
