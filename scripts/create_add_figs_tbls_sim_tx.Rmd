@@ -440,6 +440,12 @@ inputs_tailored <- bind_rows(
     stringsAsFactors = FALSE
   )
 )
+
+path_annotation <- here::here("assets/references_tailored/annotations/gencode.v31.annotation_expressed.gtf")
+
+annotation_tailored <- utl$load_gtf(path_annotation)
+
+feature_ids_all <- annotation_tailored$transcript_id %>% unique
 ```
 
 
@@ -466,7 +472,7 @@ results_quant_est_tailored <- inputs_quant_tailored %>%
     data = map2(
       path, name,
       ~ h.quant$load_result(.x) %>% 
-        h.quant$fill_lack(., annotations[[utl$annotation_used(.y)]])
+        h.quant$fill_lack(., annotation_tailored)
     )
   ) %>%
   select(-condition, -input_dir, -path)
@@ -511,7 +517,7 @@ results_de_est_tailored <- inputs_de_tailored %>%
     data = map2(
       path, name,
       ~ .load_result_de(.x, .y) %>%
-        h.de$fill_lack(., annotations[[utl$annotation_used(.y)]])
+        h.de$fill_lack(., annotation_tailored)
     )
   ) %>%
   select(-condition, -input_dir, -path)
@@ -558,10 +564,11 @@ metrics_de_tailored %>%
 
 ### 2.4 Draw plots
 
+#### 2.4.1 Quant
 ```{r}
 .data <- left_join(
-  metrics_de %>% select(name, metrics) %>% unnest(metrics),
-  metrics_de_tailored %>% select(name, metrics) %>% unnest(metrics),
+  metrics_quant %>% select(name, metrics) %>% unnest(metrics),
+  metrics_quant_tailored %>% select(name, metrics) %>% unnest(metrics),
   by = c("name", "metric")
 ) %>%
   rename(full_set = "value.x") %>%
@@ -570,7 +577,6 @@ metrics_de_tailored %>%
   utl$decorate_metrics() %>%
   mutate(metric = utl$to_lab(metric)) %>%
   arrange(name, metric) %>%
-  filter(combination != "star-rsem-ebseq") %>%
   utl$split_tibble("metric")
 
 .draw <- function(data_, group_, facet.by) {
@@ -599,7 +605,85 @@ metrics_de_tailored %>%
 
   g <- ggpubr::facet(g + ggpubr::theme_cleveland() + theme_, facet.by = facet.by)
 
-  g <- g + theme(panel.border = element_rect(fill = NA, size=1))
+  g <- g + theme(panel.border = element_rect(fill = NA, size = 1))
+  g
+}
+
+.plots <- .data %>% map(~ .draw(.x, "exp", "metric"))
+
+.plot_arranged <- ggpubr::ggarrange(
+  plotlist = .plots,
+  ncol = 2,
+  nrow = 1,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+.plot_arranged %>%
+  utl$save_plot("comparison", "quant_full_tailored.pdf",
+                width = 3.2 * 6,
+                height = 3.2 * 3)
+
+utl$rm_private_vars()
+
+```
+
+
+#### 2.4.2 DE
+
+```{r}
+.levels <- c(
+  "hisat2-stringtie-ballgown",
+  "kallisto-sleuth_wt",
+  "tophat2-cuffdiff",
+  "salmon-deseq2",
+  "star-rsem-ebseq"
+)
+
+.data %>% filter(metric == "auc") %>%
+  mutate(delta = tailored - full_set) %>% View
+
+.data <- left_join(
+  metrics_de %>% select(name, metrics) %>% unnest(metrics),
+  metrics_de_tailored %>% select(name, metrics) %>% unnest(metrics),
+  by = c("name", "metric")
+) %>%
+  rename(full_set = "value.x") %>%
+  rename(tailored = "value.y") %>%
+  pivot_longer(-(1:2), names_to = "exp") %>%
+  utl$decorate_metrics() %>%
+  mutate(metric = utl$to_lab(metric)) %>%
+  mutate(combination = factor(combination, levels = .levels)) %>%
+  arrange(combination, name, metric)%>%
+  utl$split_tibble("metric")
+
+.draw <- function(data_, group_, facet.by) {
+  theme_ <- theme(
+    text = element_text(size = 18),
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 18),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.border = element_rect(fill = NA, size= 0.5)
+  )
+
+  g <- ggpubr::ggdotchart(
+    data_,
+    x = "abbr",
+    y = "value",
+    group = group_,
+    color = group_,
+    sorting = "none",
+    rotate = TRUE,
+    dot.size = 2,
+    ggtheme = ggpubr::theme_pubr(),
+    y.text.col = TRUE
+  )
+
+  g <- ggpubr::facet(g + ggpubr::theme_cleveland() + theme_, facet.by = facet.by)
+
+  g <- g + theme(panel.border = element_rect(fill = NA, size = 1))
   g
 }
 
@@ -614,7 +698,7 @@ metrics_de_tailored %>%
 )
 
 .plot_arranged %>%
-  utl$save_plot("comparison", "full_tailored.pdf",
+  utl$save_plot("comparison", "de_full_tailored.pdf",
                 width = 3.2 * 6,
                 height = 3.2 * 3)
 
