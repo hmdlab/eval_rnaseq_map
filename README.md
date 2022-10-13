@@ -21,6 +21,6 @@ All containers used in this study are available on the [Cloud Library](https://c
 - Kallisto
 - Sleuth
 - Salmon
-- rstudio-rnaseqde
+- rstudio-rnaseq
 
 </div>
